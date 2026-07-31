@@ -76,13 +76,22 @@ it is now answered:
   already finished, holding a signal that will never abort. Without the counter
   a slow first child load commits over a newer one. This also keeps `Routes`
   correct standalone, with no `Router` and no Navigation API involved.
-- Child `goto()`s stay **unawaited** (as upstream), with errors swallowed. An
+- Child `goto()`s stay **unawaited** (as upstream) and, like upstream, are given
+  **no abort signal** — the parent commits before children run, so a child
+  handed an aborted signal stands down with no newer `goto()` to correct it and
+  the nested outlet sticks. A child with no route for the new tail (the outgoing
+  branch, mid-swap) is skipped structurally via `hasRouteFor`, so a genuine
+  `enter()` rejection still surfaces rather than being swallowed. An
   earlier revision awaited them to make `navigation.finished` cover the whole
   tree; that was wrong twice over — at that point `requestUpdate()` has not run,
   so `_childRoutes` still holds the *outgoing* branch, and awaiting it both
   gated the parent's outlet swap on an `enter()` for a tail that child would
   never render, and let its `No route found` throw strand the parent entirely.
   Nested supersession is the counter's job, not the await's.
+- The fallback click path gained the same `hasRouteFor` gate (it calls
+  `preventDefault()` first, so swallowing an unrenderable link there also stops
+  the browser doing the real navigation) and a fragment-only-link guard, so it
+  matches `_onNavigate`'s `hashChange` behaviour.
 - New `hasRouteFor(pathname)`, used by `Router` to decline what it cannot
   render.
 
@@ -111,7 +120,7 @@ Runner so it stands alone. Test changes:
 - Two `(r: RouteConfig)` annotations added in `router_test.ts` (upstream relied
   on monorepo-wide inference). **Otherwise upstream's 6 tests are unmodified and
   pass**, which is the main evidence that the rewrite preserves behaviour.
-- 12 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
+- 13 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
   The first asserts the suite is actually running against `window.navigation`
   rather than silently falling back — without it the rest would pass against the
   legacy path and prove nothing. Two more delete `window.navigation` from the
@@ -121,7 +130,7 @@ Runner so it stands alone. Test changes:
 
 ## Verified
 
-`npm test` → 18 passed (6 upstream + 12 new), Chromium via Playwright.
+`npm test` → 19 passed (6 upstream + 13 new), Chromium via Playwright.
 
 Every guard added by this fork is mutation-checked — each one deleted
 individually fails at least one test:
@@ -134,6 +143,7 @@ individually fails at least one test:
 | `rel="external"` filter | rel="external" opts out on the Navigation API path too |
 | `hasRouteFor()` gate (Navigation API path) | a path with no route is left to the browser |
 | `hasRouteFor()` gate (fallback click path) | the fallback path also declines a path it cannot render |
+| fragment-link guard (fallback click path) | the fallback path leaves fragment-only links to the browser |
 
 ## Merging upstream later
 

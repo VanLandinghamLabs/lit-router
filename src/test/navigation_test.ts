@@ -332,9 +332,16 @@ const until = async (
     const {win, doc} = await loadFrame();
     delete (win as unknown as {navigation?: unknown}).navigation;
     win.history.pushState({}, '', '/');
-    const el = doc.createElement('nav-strict') as HTMLElement;
+    const el = doc.createElement('nav-strict') as HTMLElement & {
+      usingNavigationApi: boolean;
+      updateComplete: Promise<unknown>;
+    };
     doc.body.appendChild(el);
-    await (el as unknown as {updateComplete: Promise<unknown>}).updateComplete;
+    await el.updateComplete;
+    // Without this the test cannot tell which path declined: the Navigation
+    // API gate produces the identical observable outcome, so it would pass
+    // even if the click-path gate were deleted and the `delete` above no-oped.
+    assert.isFalse(el.usingNavigationApi, 'precondition: fallback path selected');
 
     const a = doc.createElement('a');
     a.href = '/not-a-route';
@@ -349,5 +356,43 @@ const until = async (
           ?.__marker === undefined,
       5000
     );
+  });
+
+  test('the fallback path leaves fragment-only links to the browser', async () => {
+    // _onNavigate declines these via `hashChange`. Without the same guard the
+    // fallback preventDefault()s (so the browser never scrolls to the
+    // fragment) and re-runs the current route's enter() for a navigation that
+    // did not change route.
+    const {win, doc} = await loadFrame();
+    delete (win as unknown as {navigation?: unknown}).navigation;
+    win.history.pushState({}, '', '/');
+    const el = doc.createElement('nav-test') as NavTest;
+    doc.body.appendChild(el);
+    await el.updateComplete;
+    assert.isFalse(el.usingNavigationApi, 'precondition: fallback path selected');
+
+    // Get onto a real route first, then click a fragment link on that page.
+    const go = doc.createElement('a');
+    go.href = '/a';
+    doc.body.appendChild(go);
+    go.click();
+    await until('on /a', () => el.entered.includes('/a'));
+
+    // `hashchange` is the discriminator. A real fragment navigation fires it;
+    // preventDefault() + pushState (what the ungated handler does) does not,
+    // and would also leave the URL looking identical — so asserting on
+    // location.hash alone would pass either way.
+    let hashChanged = false;
+    win.addEventListener('hashchange', () => {
+      hashChanged = true;
+    });
+
+    const frag = doc.createElement('a');
+    frag.href = '#section';
+    doc.body.appendChild(frag);
+    frag.click();
+
+    await until('the browser performed the fragment navigation', () => hashChanged);
+    assert.equal(win.location.hash, '#section');
   });
 });

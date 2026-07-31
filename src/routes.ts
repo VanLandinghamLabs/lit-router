@@ -239,7 +239,25 @@ export class Routes implements ReactiveController {
     // awaiting. Errors are swallowed rather than left as unhandled rejections.
     if (tailGroup !== undefined) {
       for (const childRoutes of this._childRoutes) {
-        void childRoutes.goto(tailGroup, options).catch(() => {});
+        // No signal, for the same reason as the late-mount path below: the
+        // parent commits before children run, so a child handed an aborted
+        // signal stands down with no newer goto() arriving to correct it,
+        // leaving the nested outlet stuck. A hash-only navigation aborts the
+        // outstanding one without producing a replacement, so this is
+        // reachable. Supersession is the counter's job.
+        //
+        // The expected failure here is a child with no route for the new tail
+        // — the outgoing branch, mid-swap. Filter that structurally rather
+        // than swallowing everything, so a genuine `enter()` rejection still
+        // surfaces the way it does upstream instead of vanishing.
+        if (!childRoutes.hasRouteFor(tailGroup)) {
+          continue;
+        }
+        void childRoutes.goto(tailGroup).catch((err) => {
+          queueMicrotask(() => {
+            throw err;
+          });
+        });
       }
     }
     this._host.requestUpdate();
@@ -342,7 +360,11 @@ export class Routes implements ReactiveController {
       // with no newer goto() ever arriving to correct it, leaving the nested
       // outlet blank permanently. The goto counter covers what matters
       // (supersession by a newer goto).
-      void childRoutes.goto(tailGroup).catch(() => {});
+      void childRoutes.goto(tailGroup).catch((err) => {
+        queueMicrotask(() => {
+          throw err;
+        });
+      });
     }
   };
 }

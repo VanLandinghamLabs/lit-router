@@ -207,6 +207,17 @@ export class Router extends Routes {
       return;
     }
 
+    // A fragment-only link is the browser's job — `_onNavigate` declines it
+    // via `hashChange`, and without this the fallback would preventDefault()
+    // (so no scroll-to-fragment) and re-run the current route's `enter()`.
+    if (
+      anchor.pathname === location.pathname &&
+      anchor.hash !== '' &&
+      anchor.search === location.search
+    ) {
+      return;
+    }
+
     // Same gate as the Navigation API path, and it matters more here: this
     // handler calls preventDefault() before navigating, so swallowing a link
     // we cannot render would stop the browser doing the real navigation *and*
@@ -218,7 +229,11 @@ export class Router extends Routes {
     e.preventDefault();
     if (href !== location.href) {
       window.history.pushState({}, '', href);
-      void this.goto(anchor.pathname).catch(() => {});
+      void this.goto(anchor.pathname).catch((err) => {
+        queueMicrotask(() => {
+          throw err;
+        });
+      });
     }
   };
 

@@ -111,6 +111,8 @@ export class NavParent extends LitElement {
 /** A router with no fallback, for the "decline what we can't render" test. */
 @customElement('nav-strict')
 export class NavStrict extends LitElement {
+  usingNavigationApi = supportsNavigationApi();
+
   _router = new Router(this, [
     {path: '/', render: () => html`<h2>Root</h2>`},
     {path: '/known', render: () => html`<h2>Known</h2>`},
