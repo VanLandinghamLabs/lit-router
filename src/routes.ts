@@ -2,6 +2,8 @@
  * @license
  * Copyright 2021 Google LLC
  * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Modifications Copyright 2026 VanLandingham Labs, same license. See NOTICE.md.
  */
 
 /// <reference types="urlpattern-polyfill" />
@@ -108,6 +110,11 @@ export class Routes implements ReactiveController {
    * that we can propagate tail matches to child routes if they are added after
    * navigation / matching.
    */
+  /** Monotonic goto counter; see the last-goto-wins note in goto(). */
+  private _gotoSeq = 0;
+  /** Signal of the navigation currently being routed, for late-mounting children. */
+  private _currentSignal: AbortSignal | undefined;
+
   private _currentPathname: string | undefined;
   private _currentRoute: RouteConfig | undefined;
   private _currentParams: {
@@ -170,6 +177,16 @@ export class Routes implements ReactiveController {
     // completely disregard the origin for now. The click handler only does
     // an in-page navigation if the origin matches anyway.
     const signal = options?.signal;
+    this._currentSignal = signal;
+    // Last-goto-wins, per controller. The navigation signal alone is not
+    // enough: a child controller mounts as a *result* of its parent's render,
+    // so its first goto() comes from `_onRoutesConnected` — after the parent's
+    // navigation has already finished, and therefore with a signal that will
+    // never abort. Without this counter a slow first child load commits over a
+    // newer one. This also keeps `Routes` correct when used on its own, with
+    // no `Router` and no Navigation API in the picture.
+    const seq = ++this._gotoSeq;
+    const superseded = () => signal?.aborted === true || seq !== this._gotoSeq;
     let tailGroup: string | undefined;
 
     if (this.routes.length === 0 && this.fallback === undefined) {
@@ -198,7 +215,7 @@ export class Routes implements ReactiveController {
       }
       // A newer navigation superseded this one while `enter` was awaiting.
       // Committing now would swap the outlet onto a route the URL has left.
-      if (signal?.aborted) {
+      if (superseded()) {
         return;
       }
       // Only update route state if the enter handler completes successfully
@@ -210,11 +227,21 @@ export class Routes implements ReactiveController {
           : pathname.substring(0, pathname.length - tailGroup.length);
     }
 
-    // Propagate the tail match to children
+    // Propagate the tail match to children.
+    //
+    // Awaited, unlike upstream. A child's `enter()` is just as async as ours,
+    // and `Router` resolves its `intercept()` handler when this returns — so
+    // firing children off unawaited finishes the navigation while a nested
+    // route is still resolving. Its signal is then never aborted (a *finished*
+    // navigation has nothing left to cancel), and the superseded child commits
+    // anyway. That reintroduces the exact race this fork exists to remove, one
+    // level down, on the nested routes real apps actually use.
     if (tailGroup !== undefined) {
-      for (const childRoutes of this._childRoutes) {
-        childRoutes.goto(tailGroup, options);
-      }
+      await Promise.all(
+        this._childRoutes.map((childRoutes) =>
+          childRoutes.goto(tailGroup as string, options)
+        )
+      );
     }
     this._host.requestUpdate();
   }
@@ -231,6 +258,24 @@ export class Routes implements ReactiveController {
    */
   get params() {
     return this._currentParams;
+  }
+
+  /**
+   * True when this controller can render `pathname` — i.e. a route matches, or
+   * a fallback is configured.
+   *
+   * `Router` gates interception on this: intercepting a path we cannot render
+   * commits the URL and then throws out of `goto()`, leaving the address bar
+   * moved and the outlet stale. Letting the browser handle it instead means a
+   * server-rendered page, an export endpoint, or a GET form still works.
+   */
+  hasRouteFor(pathname: string): boolean {
+    // Mirrors goto()'s special case: a controller with no routes of its own
+    // behaves as if it had a single `/*` route.
+    if (this.routes.length === 0 && this.fallback === undefined) {
+      return true;
+    }
+    return this._getRoute(pathname) !== undefined;
   }
 
   /**
@@ -292,7 +337,9 @@ export class Routes implements ReactiveController {
 
     const tailGroup = getTailGroup(this._currentParams);
     if (tailGroup !== undefined) {
-      childRoutes.goto(tailGroup);
+      // A child that mounts after its parent committed still gets the current
+      // navigation's signal, so a stop/supersede reaches it too.
+      childRoutes.goto(tailGroup, {signal: this._currentSignal});
     }
   };
 }

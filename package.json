@@ -32,6 +32,7 @@
     "/src/"
   ],
   "scripts": {
+    "prepare": "npm run build",
     "build": "tsc --build --pretty && npm run build:assets",
     "clean": "rm -rf development tsconfig.tsbuildinfo",
     "check-types": "tsc --noEmit -p tsconfig.json",

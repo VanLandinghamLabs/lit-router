@@ -13,14 +13,46 @@ import {Routes} from './routes.js';
 const origin = location.origin || location.protocol + '//' + location.host;
 
 /**
+ * The slice of `NavigateEvent` this router reads. Declared locally rather than
+ * typing the handler `any`: these properties *are* the correctness boundary, so
+ * a typo like `hashchange` for `hashChange` would silently disable a filter
+ * forever. Names verified against Chromium's `NavigateEvent.prototype`.
+ */
+interface NavigateEventLike {
+  readonly canIntercept: boolean;
+  readonly hashChange: boolean;
+  readonly downloadRequest: string | null;
+  readonly formData: FormData | null;
+  readonly navigationType: 'push' | 'replace' | 'reload' | 'traverse';
+  readonly signal: AbortSignal;
+  readonly destination: {readonly url: string; readonly sameDocument: boolean};
+  /** Not in every engine yet; used only as a best-effort `rel` check. */
+  readonly sourceElement?: Element | null;
+  intercept(options: {handler?: () => Promise<void>}): void;
+}
+
+interface NavigationLike {
+  addEventListener(
+    type: 'navigate',
+    listener: (e: NavigateEventLike) => void
+  ): void;
+  removeEventListener(
+    type: 'navigate',
+    listener: (e: NavigateEventLike) => void
+  ): void;
+}
+
+const getNavigation = (): NavigationLike | undefined =>
+  (window as unknown as {navigation?: NavigationLike}).navigation;
+
+/**
  * True when the Navigation API is available. Baseline Newly Available since
  * January 2026 (Chrome/Edge, Safari 26.2, Firefox 147); the legacy
  * click + popstate path below is kept for engines older than that.
  */
 export const supportsNavigationApi = (): boolean =>
   typeof window !== 'undefined' &&
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  typeof (window as any).navigation?.addEventListener === 'function';
+  typeof getNavigation()?.addEventListener === 'function';
 
 /**
  * A root-level router that intercepts navigation.
@@ -63,8 +95,7 @@ export class Router extends Routes {
     super.hostConnected();
     this._usingNavigationApi = supportsNavigationApi();
     if (this._usingNavigationApi) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).navigation.addEventListener('navigate', this._onNavigate);
+      getNavigation()!.addEventListener('navigate', this._onNavigate);
     } else {
       window.addEventListener('click', this._onClick);
       window.addEventListener('popstate', this._onPopState);
@@ -77,11 +108,7 @@ export class Router extends Routes {
   override hostDisconnected() {
     super.hostDisconnected();
     if (this._usingNavigationApi) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).navigation.removeEventListener(
-        'navigate',
-        this._onNavigate
-      );
+      getNavigation()!.removeEventListener('navigate', this._onNavigate);
     } else {
       window.removeEventListener('click', this._onClick);
       window.removeEventListener('popstate', this._onPopState);
@@ -94,10 +121,9 @@ export class Router extends Routes {
    * legacy path needed two listeners to cover a strict subset of these, and
    * could not observe programmatic navigation at all.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private _onNavigate = (e: any) => {
+  private _onNavigate = (e: NavigateEventLike) => {
     // Not ours to handle: anything the browser says cannot be intercepted,
-    // fragment-only moves, downloads, and form submissions.
+    // fragment-only moves, downloads, and POST form submissions.
     if (!e.canIntercept || e.hashChange || e.downloadRequest !== null) {
       return;
     }
@@ -105,8 +131,35 @@ export class Router extends Routes {
       return;
     }
 
+    // Reloads must stay reloads. `canIntercept` is true for them, so without
+    // this `location.reload()` silently degrades to re-running goto() on the
+    // same path — the document is never replaced, breaking the standard
+    // "new version available, reload" escape hatch. (It would also disagree
+    // with the browser's own refresh button, which is not interceptable.)
+    if (e.navigationType === 'reload') {
+      return;
+    }
+
+    // Honour the `rel="external"` opt-out that the legacy click path has, so
+    // the two paths this package ships agree. Best-effort: `sourceElement` is
+    // not in every engine, and is absent for programmatic navigation.
+    if (e.sourceElement?.getAttribute?.('rel') === 'external') {
+      return;
+    }
+
     const url = new URL(e.destination.url);
     if (url.origin !== origin) {
+      return;
+    }
+
+    // Only intercept what we can actually render. `canIntercept` is true for
+    // any same-origin URL, including cross-document ones — so without this a
+    // link to a server-rendered page, an export endpoint, or a GET form
+    // (whose `formData` is null) gets swallowed: the URL commits, goto()
+    // throws "No route found", and the address bar is left pointing somewhere
+    // the outlet never went. Declining lets the browser do the real
+    // navigation, which is the correct outcome.
+    if (!this.hasRouteFor(url.pathname)) {
       return;
     }
 

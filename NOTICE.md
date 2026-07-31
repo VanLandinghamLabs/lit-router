@@ -11,9 +11,11 @@ it lives inside the `lit/lit` monorepo at `packages/labs/router`.
 | Forked | 2026-07-31 |
 | Licence | BSD-3-Clause — unchanged, see `LICENSE` |
 
-Original copyright **Google LLC**, retained in `LICENSE` and in the per-file
-headers. Modified files carry an additional VanLandingham Labs modification
-notice under the same licence, as BSD-3-Clause requires.
+Original copyright **Google LLC**, retained verbatim in `LICENSE` and in every
+per-file header. BSD-3-Clause requires retention of the copyright notice, the
+conditions and the disclaimer — it does *not* require a modification notice
+(that is Apache-2.0 §4(b)). Modified files carry one anyway, as a courtesy to
+anyone diffing against upstream.
 
 This fork is **private and unpublished**. It is deliberately *not* named
 `@lit-labs/router` — the npm scope belongs to the Lit team, and a fork
@@ -64,11 +66,21 @@ it is now answered:
   (Chrome/Edge, Safari 26.2, Firefox 147); Baseline *Widely* Available is not
   until roughly mid-2028, so older engines still need the old path.
 
-### `src/routes.ts` — one behavioural change
+### `src/routes.ts` — behavioural changes
 
-- `goto(pathname, options?)` accepts `options.signal`. After `enter()` resolves,
-  an aborted signal makes `goto()` return without committing. The option is
-  propagated to child routes. Everything else is untouched.
+- `goto(pathname, options?)` accepts `options.signal`; an aborted signal after
+  `enter()` resolves makes `goto()` return without committing.
+- **Per-controller last-goto-wins counter.** The signal alone is not enough: a
+  child controller mounts as a *result* of its parent's render, so its first
+  `goto()` comes from `_onRoutesConnected` — after the parent's navigation has
+  already finished, holding a signal that will never abort. Without the counter
+  a slow first child load commits over a newer one. This also keeps `Routes`
+  correct standalone, with no `Router` and no Navigation API involved.
+- **Child `goto()`s are awaited**, so `intercept()`'s handler — and therefore
+  `navigation.finished` — covers the whole route tree rather than just the top
+  level.
+- New `hasRouteFor(pathname)`, used by `Router` to decline what it cannot
+  render.
 
 ### Build and tests
 
@@ -80,21 +92,29 @@ Runner so it stands alone. Test changes:
 - `stripExpressionComments` reimplemented locally (`src/test/test-helpers.ts`)
   in place of the monorepo-internal `@lit-labs/testing`.
 - `chai` → `@open-wc/testing` (browser-native ESM).
-- **Upstream's 6 tests are otherwise unmodified and pass**, which is the main
-  evidence that the rewrite preserves existing behaviour.
-- 5 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
+- Two `(r: RouteConfig)` annotations added in `router_test.ts` (upstream relied
+  on monorepo-wide inference). **Otherwise upstream's 6 tests are unmodified and
+  pass**, which is the main evidence that the rewrite preserves behaviour.
+- 10 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
   The first asserts the suite is actually running against `window.navigation`
-  rather than silently falling back — without it the other four would pass
-  against the legacy path and prove nothing.
+  rather than silently falling back — without it the rest would pass against the
+  legacy path and prove nothing.
 
 ## Verified
 
-`npm test` → 11 passed (6 upstream + 5 new), Chromium via Playwright.
+`npm test` → 17 passed (6 upstream + 11 new), Chromium via Playwright.
 
-The signal guard is mutation-checked: replacing `if (signal?.aborted)` with a
-dead condition fails `a superseded navigation does not win the outlet` with
-`expected 'A' to include 'B'` — the superseded route swapping the outlet back,
-which is the exact failure this fork exists to prevent.
+Every guard added by this fork is mutation-checked — each one deleted
+individually fails at least one test:
+
+| Guard | Test that fails |
+|---|---|
+| per-controller goto counter | a superseded navigation does not win a NESTED outlet |
+| `signal.aborted` check | an aborted signal stands a goto down even with no newer goto |
+| `await` on child `goto()`s | navigation.finished waits for NESTED routes |
+| `navigationType === 'reload'` filter | a reload is left alone |
+| `rel="external"` filter | rel="external" opts out on the Navigation API path too |
+| `hasRouteFor()` gate | a path with no route is left to the browser |
 
 ## Merging upstream later
 

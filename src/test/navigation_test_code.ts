@@ -7,6 +7,7 @@
 import {LitElement, html} from 'lit';
 import {customElement} from 'lit/decorators.js';
 import {Router, supportsNavigationApi} from '../router.js';
+import {Routes} from '../routes.js';
 
 /**
  * A router whose `enter()` hooks can be held open per-route, so a test can
@@ -59,8 +60,82 @@ export class NavTest extends LitElement {
   }
 }
 
+/** Child controller for the nested-route supersession test. */
+@customElement('nav-child')
+export class NavChild extends LitElement {
+  static gates = new Map<string, () => void>();
+  static entered: string[] = [];
+  static slowPaths = new Set<string>();
+
+  private _hold = async (path: string): Promise<boolean> => {
+    NavChild.entered.push(path);
+    if (NavChild.slowPaths.has(path)) {
+      await new Promise<void>((resolve) => NavChild.gates.set(path, resolve));
+    }
+    return true;
+  };
+
+  _routes = new Routes(this, [
+    // No leading slash: the tail group from the parent's `/x/*` is `a`, not
+    // `/a` — the convention upstream's own child fixtures use.
+    {
+      path: 'a',
+      enter: () => this._hold('a'),
+      render: () => html`<span>CHILD-A</span>`,
+    },
+    {
+      path: 'b',
+      enter: () => this._hold('b'),
+      render: () => html`<span>CHILD-B</span>`,
+    },
+  ]);
+
+  override render() {
+    return html`${this._routes.outlet()}`;
+  }
+}
+
+/** Parent whose `/x/*` route mounts the child controller above. */
+@customElement('nav-parent')
+export class NavParent extends LitElement {
+  _router = new Router(this, [
+    {path: '/', render: () => html`<h2>Root</h2>`},
+    {path: '/x/*', render: () => html`<nav-child></nav-child>`},
+  ]);
+
+  override render() {
+    return html`${this._router.outlet()}`;
+  }
+}
+
+/** A router with no fallback, for the "decline what we can't render" test. */
+@customElement('nav-strict')
+export class NavStrict extends LitElement {
+  _router = new Router(this, [
+    {path: '/', render: () => html`<h2>Root</h2>`},
+    {path: '/known', render: () => html`<h2>Known</h2>`},
+  ]);
+
+  override render() {
+    return html`${this._router.outlet()}`;
+  }
+}
+
 declare global {
   interface HTMLElementTagNameMap {
     'nav-test': NavTest;
+    'nav-child': NavChild;
+    'nav-parent': NavParent;
+    'nav-strict': NavStrict;
   }
 }
+
+// Expose this module on the frame's window so the parent realm can reach the
+// same instance (and therefore the same static test state) that the frame's
+// elements use. Importing it again from the parent would create a second copy.
+(window as unknown as {__navTestModule: unknown}).__navTestModule = {
+  NavTest,
+  NavChild,
+  NavParent,
+  NavStrict,
+};
