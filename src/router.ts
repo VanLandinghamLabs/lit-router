@@ -93,6 +93,10 @@ export class Router extends Routes {
   interceptOptions?: InterceptOptions;
 
   private _usingNavigationApi = false;
+  /** Fragment-change detection for the fallback popstate handler. */
+  private _lastRoutedPath = typeof location === 'undefined' ? '' : location.pathname;
+  private _lastRoutedSearch =
+    typeof location === 'undefined' ? '' : location.search;
 
   override hostConnected() {
     super.hostConnected();
@@ -210,9 +214,14 @@ export class Router extends Routes {
     // A fragment-only link is the browser's job — `_onNavigate` declines it
     // via `hashChange`, and without this the fallback would preventDefault()
     // (so no scroll-to-fragment) and re-run the current route's `enter()`.
+    // Compare everything *except* the fragment, rather than testing for a
+    // non-empty hash: `<a href="#">` — the commonest fragment link there is —
+    // has an empty `anchor.hash`, yet `_onNavigate` reports `hashChange: true`
+    // for it and declines. The extra case this admits (an href identical to
+    // the current URL) is already a no-op via the `href !== location.href`
+    // check below.
     if (
       anchor.pathname === location.pathname &&
-      anchor.hash !== '' &&
       anchor.search === location.search
     ) {
       return;
@@ -229,6 +238,8 @@ export class Router extends Routes {
     e.preventDefault();
     if (href !== location.href) {
       window.history.pushState({}, '', href);
+      this._lastRoutedPath = anchor.pathname;
+      this._lastRoutedSearch = anchor.search;
       void this.goto(anchor.pathname).catch((err) => {
         queueMicrotask(() => {
           throw err;
@@ -238,6 +249,21 @@ export class Router extends Routes {
   };
 
   private _onPopState = (_e: PopStateEvent) => {
-    this.goto(window.location.pathname);
+    // A fragment navigation is a same-document navigation, so it fires
+    // popstate too. Routing on it re-runs the current route's `enter()` for a
+    // move that changed no route — the other half of what the fragment guard
+    // in _onClick addresses, and the remaining disagreement with
+    // `_onNavigate`, which declines these outright via `hashChange`.
+    const {pathname, search} = window.location;
+    if (pathname === this._lastRoutedPath && search === this._lastRoutedSearch) {
+      return;
+    }
+    this._lastRoutedPath = pathname;
+    this._lastRoutedSearch = search;
+    void this.goto(pathname).catch((err) => {
+      queueMicrotask(() => {
+        throw err;
+      });
+    });
   };
 }

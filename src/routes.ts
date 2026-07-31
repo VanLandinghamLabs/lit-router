@@ -251,6 +251,12 @@ export class Routes implements ReactiveController {
         // than swallowing everything, so a genuine `enter()` rejection still
         // surfaces the way it does upstream instead of vanishing.
         if (!childRoutes.hasRouteFor(tailGroup)) {
+          // Skip the navigation but still supersede: `goto()` is where the
+          // counter is bumped, so returning early here would leave an
+          // in-flight child navigation current, free to commit over a URL that
+          // has moved on. Removing the abort signal above is only safe because
+          // the counter always runs — including here.
+          childRoutes._supersede();
           continue;
         }
         void childRoutes.goto(tailGroup).catch((err) => {
@@ -275,6 +281,14 @@ export class Routes implements ReactiveController {
    */
   get params() {
     return this._currentParams;
+  }
+
+  /**
+   * Invalidate any in-flight `goto()` on this controller without starting a
+   * new one. Same-class access, so `_gotoSeq` stays private to `Routes`.
+   */
+  private _supersede(): void {
+    this._gotoSeq++;
   }
 
   /**
@@ -353,7 +367,11 @@ export class Routes implements ReactiveController {
     };
 
     const tailGroup = getTailGroup(this._currentParams);
-    if (tailGroup !== undefined) {
+    // Same structural filter as the propagation path in goto(): a child that
+    // mounts under a tail it cannot render is the expected case (a deep link
+    // to `/x/unknown`), not an error. Without this the two call sites disagree
+    // — silent there, uncaught global throw here — for identical input.
+    if (tailGroup !== undefined && childRoutes.hasRouteFor(tailGroup)) {
       // No signal here on purpose. The parent commits its own state before
       // children run, so by the time a late child mounts the navigation may
       // already have been aborted — handing it that signal makes it stand down

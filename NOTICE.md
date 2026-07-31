@@ -90,8 +90,10 @@ it is now answered:
   Nested supersession is the counter's job, not the await's.
 - The fallback click path gained the same `hasRouteFor` gate (it calls
   `preventDefault()` first, so swallowing an unrenderable link there also stops
-  the browser doing the real navigation) and a fragment-only-link guard, so it
-  matches `_onNavigate`'s `hashChange` behaviour.
+  the browser doing the real navigation) and a fragment-only-link guard. A
+  fragment move is a same-document navigation, so it fires `popstate` too —
+  `_onPopState` therefore no-ops when only the fragment changed, which is the
+  other half of matching `_onNavigate`'s `hashChange` behaviour.
 - New `hasRouteFor(pathname)`, used by `Router` to decline what it cannot
   render.
 
@@ -120,7 +122,7 @@ Runner so it stands alone. Test changes:
 - Two `(r: RouteConfig)` annotations added in `router_test.ts` (upstream relied
   on monorepo-wide inference). **Otherwise upstream's 6 tests are unmodified and
   pass**, which is the main evidence that the rewrite preserves behaviour.
-- 13 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
+- 16 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
   The first asserts the suite is actually running against `window.navigation`
   rather than silently falling back — without it the rest would pass against the
   legacy path and prove nothing. Two more delete `window.navigation` from the
@@ -130,7 +132,11 @@ Runner so it stands alone. Test changes:
 
 ## Verified
 
-`npm test` → 19 passed (6 upstream + 13 new), Chromium via Playwright.
+`npm test` → 22 passed (6 upstream + 16 new), Chromium via Playwright.
+
+Run `npm run clean` before a mutation check: the build is `composite`/
+`incremental`, and a stale `development/` can contain a hunk's comment without
+its code, greening the suite against output that lacks the change.
 
 Every guard added by this fork is mutation-checked — each one deleted
 individually fails at least one test:
@@ -144,6 +150,9 @@ individually fails at least one test:
 | `hasRouteFor()` gate (Navigation API path) | a path with no route is left to the browser |
 | `hasRouteFor()` gate (fallback click path) | the fallback path also declines a path it cannot render |
 | fragment-link guard (fallback click path) | the fallback path leaves fragment-only links to the browser |
+| `_supersede()` on a skipped child | a child that cannot render the new tail is still superseded |
+| `hasRouteFor` filter (late-mount path) | a deep link under a wildcard the child cannot render does not throw |
+| popstate fragment no-op | a bare "#" link is left to the browser as well |
 
 ## Merging upstream later
 

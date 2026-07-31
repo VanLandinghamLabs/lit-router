@@ -392,7 +392,93 @@ const until = async (
     doc.body.appendChild(frag);
     frag.click();
 
+    const enteredBeforeFragment = el.entered.length;
     await until('the browser performed the fragment navigation', () => hashChanged);
+    await new Promise((r) => setTimeout(r, 100));
     assert.equal(win.location.hash, '#section');
+    assert.equal(
+      el.entered.length,
+      enteredBeforeFragment,
+      'a fragment-only move must not re-run the route (popstate fires for it too)'
+    );
+  });
+
+  test('a bare "#" link is left to the browser as well', async () => {
+    // anchor.hash is '' for href="#", but _onNavigate still reports
+    // hashChange: true and declines — so a guard keyed on a non-empty hash
+    // would disagree with it on the commonest fragment link there is.
+    const {win, doc} = await loadFrame();
+    delete (win as unknown as {navigation?: unknown}).navigation;
+    win.history.pushState({}, '', '/');
+    const el = doc.createElement('nav-test') as NavTest;
+    doc.body.appendChild(el);
+    await el.updateComplete;
+    assert.isFalse(el.usingNavigationApi, 'precondition: fallback path selected');
+
+    const go = doc.createElement('a');
+    go.href = '/a';
+    doc.body.appendChild(go);
+    go.click();
+    await until('on /a', () => el.entered.includes('/a'));
+    const before = el.entered.length;
+
+    const bare = doc.createElement('a');
+    bare.href = '#';
+    doc.body.appendChild(bare);
+    bare.click();
+    await new Promise((r) => setTimeout(r, 150));
+
+    assert.equal(el.entered.length, before, 'a bare # link must not re-route');
+  });
+
+  test('a child that cannot render the new tail is still superseded', async () => {
+    // The propagation loop skips a child with no route for the new tail — the
+    // outgoing branch, mid-swap. Skipping must still bump that child's goto
+    // counter, or an in-flight nested enter() stays current and commits over a
+    // URL that has moved on. Removing the abort signal is only safe because
+    // the counter always runs, including on this path.
+    const {el, win, mod} = await mountParent();
+    mod.NavChild.slowPaths.add('a');
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nav = (win as any).navigation;
+    nav.navigate('/x/a', {history: 'push'});
+    await until('child a entered', () => mod.NavChild.entered.includes('a'));
+
+    // 'zzz' matches the parent's /x/* but no child route, so the child is
+    // skipped rather than navigated.
+    nav.navigate('/x/zzz', {history: 'push'});
+    await new Promise((r) => setTimeout(r, 100));
+
+    mod.NavChild.gates.get('a')?.();
+    await new Promise((r) => setTimeout(r, 150));
+    await el.updateComplete;
+
+    const child = el.shadowRoot!.querySelector('nav-child');
+    const text = child?.shadowRoot?.textContent ?? '';
+    assert.equal(win.location.pathname, '/x/zzz');
+    assert.notInclude(
+      text,
+      'CHILD-A',
+      'the abandoned nested route must not commit after the URL moved on'
+    );
+  });
+
+  test('a deep link under a wildcard the child cannot render does not throw', async () => {
+    // The late-mount path must apply the same structural filter as the
+    // propagation loop, or identical input is silent one way and an uncaught
+    // global error the other, depending only on whether the child was already
+    // mounted.
+    const {el, win, doc} = await mountParent();
+    const errors: string[] = [];
+    win.addEventListener('error', (e) => errors.push(String((e as ErrorEvent).message)));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (win as any).navigation.navigate('/x/zzz', {history: 'push'}).finished;
+    await new Promise((r) => setTimeout(r, 150));
+    await (el as unknown as {updateComplete: Promise<unknown>}).updateComplete;
+
+    void doc;
+    assert.deepEqual(errors, [], 'no uncaught error for an unrenderable tail');
   });
 });
