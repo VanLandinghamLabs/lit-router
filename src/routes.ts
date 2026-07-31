@@ -155,16 +155,21 @@ export class Routes implements ReactiveController {
    * This does not navigate parent routes, so it isn't (yet) a general page
    * navigation API. It does navigate child routes if pathname matches a
    * pattern with a tail wildcard pattern (`/*`).
+   *
+   * Pass `options.signal` to make the navigation abandonable. `enter()` is
+   * awaited, so a second `goto()` can start — and finish — while the first is
+   * still resolving its route; without a signal the slower one commits last
+   * and the outlet ends up on a route the URL has already left. `Router`
+   * threads `NavigateEvent.signal` through for exactly this reason.
    */
-  async goto(pathname: string) {
+  async goto(pathname: string, options?: {signal?: AbortSignal}) {
     // TODO (justinfagnani): handle absolute vs relative paths separately.
-    // TODO (justinfagnani): do we need to detect when goto() is called while
-    // a previous goto() call is still pending?
 
     // TODO (justinfagnani): generalize this to handle query params and
     // fragments. It currently only handles path names because it's easier to
     // completely disregard the origin for now. The click handler only does
     // an in-page navigation if the origin matches anyway.
+    const signal = options?.signal;
     let tailGroup: string | undefined;
 
     if (this.routes.length === 0 && this.fallback === undefined) {
@@ -191,6 +196,11 @@ export class Routes implements ReactiveController {
           return;
         }
       }
+      // A newer navigation superseded this one while `enter` was awaiting.
+      // Committing now would swap the outlet onto a route the URL has left.
+      if (signal?.aborted) {
+        return;
+      }
       // Only update route state if the enter handler completes successfully
       this._currentRoute = route;
       this._currentParams = params;
@@ -203,7 +213,7 @@ export class Routes implements ReactiveController {
     // Propagate the tail match to children
     if (tailGroup !== undefined) {
       for (const childRoutes of this._childRoutes) {
-        childRoutes.goto(tailGroup);
+        childRoutes.goto(tailGroup, options);
       }
     }
     this._host.requestUpdate();

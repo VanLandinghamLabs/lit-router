@@ -4,10 +4,10 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-import {assert} from 'chai';
+import {assert} from '@open-wc/testing';
 import type {Test1, Child1, Child2} from './router_test_code.js';
-import type {RouteConfig, PathRouteConfig} from '@lit-labs/router/routes.js';
-import {stripExpressionComments} from '@lit-labs/testing';
+import type {RouteConfig, PathRouteConfig} from '../routes.js';
+import {stripExpressionComments} from './test-helpers.js';
 
 const isPathRouteConfig = (route: RouteConfig): route is PathRouteConfig =>
   route.hasOwnProperty('path');
@@ -169,7 +169,7 @@ const canTest =
 
     assert.isFalse(
       el._router.routes.some(
-        (r) => isPathRouteConfig(r) && r.path === '/server-route'
+        (r: RouteConfig) => isPathRouteConfig(r) && r.path === '/server-route'
       )
     );
 
@@ -182,7 +182,7 @@ const canTest =
 
     assert.isTrue(
       el._router.routes.some(
-        (r) => isPathRouteConfig(r) && r.path === '/server-route'
+        (r: RouteConfig) => isPathRouteConfig(r) && r.path === '/server-route'
       )
     );
 
