@@ -5,6 +5,7 @@
  */
 
 import {assert} from '@open-wc/testing';
+import {targetsThisNavigable} from '../router.js';
 import type {NavTest} from './navigation_test_code.js';
 
 const canTest =
@@ -608,6 +609,7 @@ const until = async (
       start: string;
       href: string;
       attrs?: Record<string, string>;
+      element?: 'a' | 'area';
     }> = [
       {name: 'fragment link', start: '/a', href: '#section'},
       {name: 'bare hash', start: '/a', href: '#'},
@@ -636,6 +638,21 @@ const until = async (
         attrs: {rel: 'external'},
       },
       {name: 'download link', start: '/', href: '/a', attrs: {download: ''}},
+      {name: 'target="_blank"', start: '/', href: '/a', attrs: {target: '_blank'}},
+      // URL.pathname/.search normalise a bare `?` away; the browser's own
+      // predicate compares the raw pre-fragment serialisation. These two rows
+      // are the query-side twin of the bare-`#` case.
+      {name: 'bare query before a fragment', start: '/a', href: '/a?#s'},
+      {name: 'leaving a bare query', start: '/a?#x', href: '/a#s'},
+      {name: 'bare query on both sides', start: '/a?#x', href: '/a?#s'},
+      // <area> exposes the same href/target/rel surface as <a> and the
+      // Navigation API treats it identically.
+      {
+        name: 'area element',
+        start: '/',
+        href: '/a',
+        element: 'area',
+      },
     ];
 
     /** Click `href` from `start` and report what the router decided. */
@@ -643,7 +660,8 @@ const until = async (
       useNavigationApi: boolean,
       start: string,
       href: string,
-      attrs: Record<string, string> = {}
+      attrs: Record<string, string> = {},
+      element: 'a' | 'area' = 'a'
     ) => {
       const {win, doc} = await loadFrame();
       if (!useNavigationApi) {
@@ -664,12 +682,12 @@ const until = async (
       seed.href = start;
       doc.body.appendChild(seed);
       seed.click();
-      await until(
-        `on ${start}`,
-        () =>
-          win.location.pathname + win.location.search + win.location.hash ===
-          start
-      );
+      // Raw URL, not pathname+search+hash: `location.search` normalises a
+      // bare `?` away, so a reconstruction can never match a `start` that
+      // carries one — the same normalisation the guard itself had to stop
+      // relying on.
+      const rel = () => win.location.href.slice(win.location.origin.length);
+      await until(`on ${start}`, () => rel() === start);
       await new Promise((r) => setTimeout(r, 60));
 
       (win as unknown as {__marker?: string}).__marker = 'alive';
@@ -679,12 +697,24 @@ const until = async (
         hashChanged = true;
       });
 
-      const a = doc.createElement('a');
-      a.href = href;
+      let a: HTMLAnchorElement | HTMLAreaElement;
+      if (element === 'area') {
+        const map = doc.createElement('map');
+        map.name = 'm';
+        const area = doc.createElement('area');
+        area.href = href;
+        map.appendChild(area);
+        doc.body.appendChild(map);
+        a = area;
+      } else {
+        const anchor = doc.createElement('a');
+        anchor.href = href;
+        doc.body.appendChild(anchor);
+        a = anchor;
+      }
       for (const [k, v] of Object.entries(attrs)) {
         a.setAttribute(k, v);
       }
-      doc.body.appendChild(a);
       a.click();
       await new Promise((r) => setTimeout(r, 200));
 
@@ -702,16 +732,20 @@ const until = async (
         // Distinguishes "the browser did the fragment navigation" from
         // "nothing happened" — both otherwise look like not-routed.
         hashChanged: survived ? hashChanged : false,
-        url: survived
-          ? win.location.pathname + win.location.search + win.location.hash
-          : '',
+        url: survived ? rel() : '',
       };
     };
 
     for (const c of CASES) {
       test(`${c.name}: both paths agree`, async () => {
-        const viaApi = await decide(true, c.start, c.href, c.attrs);
-        const viaFallback = await decide(false, c.start, c.href, c.attrs);
+        const viaApi = await decide(true, c.start, c.href, c.attrs, c.element);
+        const viaFallback = await decide(
+          false,
+          c.start,
+          c.href,
+          c.attrs,
+          c.element
+        );
         assert.deepEqual(
           viaFallback,
           viaApi,
@@ -829,5 +863,47 @@ const until = async (
       () => win.scrollY > 0,
       3000
     );
+  });
+
+  // The parity table cannot reach this: `decide()` runs every case inside an
+  // iframe, so the framing context is a pinned input — and framed, `_top` and
+  // `_parent` really do target elsewhere, which is exactly what made an
+  // earlier `_self`-only check look correct. Testing the predicate directly is
+  // the only way to vary the axis the harness fixes.
+  suite('target resolution against the framing context', () => {
+    const unframed = {top: null as unknown, parent: null as unknown, name: ''};
+    unframed.top = unframed;
+    unframed.parent = unframed;
+    const framed = {top: {}, parent: {}, name: ''};
+    const named = {top: {}, parent: {}, name: 'shell'};
+
+    test('unframed, _top and _parent are this navigable', () => {
+      assert.isTrue(targetsThisNavigable('_top', unframed));
+      assert.isTrue(targetsThisNavigable('_parent', unframed));
+    });
+
+    test('framed, _top and _parent are somewhere else', () => {
+      assert.isFalse(targetsThisNavigable('_top', framed));
+      assert.isFalse(targetsThisNavigable('_parent', framed));
+    });
+
+    test('_self and the empty target are always this navigable', () => {
+      for (const w of [unframed, framed, named]) {
+        assert.isTrue(targetsThisNavigable('', w));
+        assert.isTrue(targetsThisNavigable('_self', w));
+      }
+    });
+
+    test('_blank never is, even if window.name happens to match', () => {
+      assert.isFalse(targetsThisNavigable('_blank', framed));
+      assert.isFalse(
+        targetsThisNavigable('_blank', {top: {}, parent: {}, name: '_blank'})
+      );
+    });
+
+    test('a named target matching window.name is this navigable', () => {
+      assert.isTrue(targetsThisNavigable('shell', named));
+      assert.isFalse(targetsThisNavigable('other', named));
+    });
   });
 });

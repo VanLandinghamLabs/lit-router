@@ -104,6 +104,19 @@ it is now answered:
 - New `hasRouteFor(pathname)`, used by `Router` to decline what it cannot
   render.
 
+### What the fallback promises
+
+The legacy click/popstate path is **best-effort compatibility for pre-2026
+engines, not a decision-identical twin of `_onNavigate`.** Nine review rounds on
+this fork found real divergences in it and every one was in `_onClick`; the
+Navigation API path has been stable throughout. The parity table is what keeps
+the two aligned on the inputs it can vary, and the known gaps are listed below
+rather than pretended away.
+
+If your browser support baseline is Safari 26.2 / Firefox 147 or newer, deleting
+the fallback outright removes this entire class of defect and about a third of
+`router.ts`.
+
 ### Known limits
 
 - `navigation.finished` covers the top-level route, not nested ones. Making it
@@ -115,6 +128,15 @@ it is now answered:
   "decline what we cannot render" fix does not reach that configuration.
 - `goto()` still ignores the query string (upstream limitation), so a GET form
   whose action matches a route is intercepted and loses its query.
+- **Fallback path only**, all verified divergences from `_onNavigate` that are
+  not fixed: a link inside a **closed** shadow root (`composedPath()` is
+  retargeted, so the anchor is invisible to a `window` listener) and an SVG
+  `<a>` (lowercase `tagName`, `href.baseVal`). `<area>` *is* handled.
+- The `seen` set in `_supersede()` is defence in depth and unpinned **by
+  construction**: since `hostDisconnected` removes its listener, no test can
+  build a `_childRoutes` cycle any more.
+- An app setting `interceptOptions = {scroll: 'manual'}` gets no scroll on the
+  Navigation API path but still gets the browser's on the fallback.
 - A child skipped because it cannot render the new tail keeps its previously
   *committed* outlet — it is superseded (no in-flight navigation can commit)
   but not cleared, so it goes on rendering the route the URL has left. Upstream
@@ -135,7 +157,7 @@ Runner so it stands alone. Test changes:
 - Two `(r: RouteConfig)` annotations added in `router_test.ts` (upstream relied
   on monorepo-wide inference). **Otherwise upstream's 6 tests are unmodified and
   pass**, which is the main evidence that the rewrite preserves behaviour.
-- 36 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
+- 46 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
   The first asserts the suite is actually running against `window.navigation`
   rather than silently falling back — without it the rest would pass against the
   legacy path and prove nothing. Two more delete `window.navigation` from the
@@ -145,7 +167,7 @@ Runner so it stands alone. Test changes:
 
 ## Verified
 
-`npm test` → 42 passed (6 upstream + 36 new), Chromium via Playwright.
+`npm test` → 52 passed (6 upstream + 46 new), Chromium via Playwright.
 
 Run `npm run clean` before a mutation check: the build is `composite`/
 `incremental`, and a stale `development/` can contain a hunk's comment without
@@ -179,8 +201,20 @@ bite, both learned the hard way:
 
 Every conjunct of the fragment guard is individually mutation-pinned by a row.
 
+**The table cannot reach every input.** `decide()` runs each case inside an
+iframe, so the *framing context* is pinned — and framed, `_top`/`_parent`
+genuinely do target elsewhere, which is what made an earlier `_self`-only check
+look correct for two rounds. Anything `_onClick` reads that the table cannot
+vary needs a direct test instead; `targetsThisNavigable()` is exported and unit
+-tested for exactly that reason. The full list of what `_onClick` reads:
+`button`, `metaKey`, `ctrlKey`, `shiftKey`, `altKey`, `defaultPrevented`,
+`composedPath()` (element kind **and** shadow mode), `target` × framing,
+`download`, `rel`, `href`, `origin`, `pathname`, `search`, `hash` — plus
+trusted-vs-synthetic events, which the harness cannot produce.
+
 Every guard added by this fork is mutation-checked — each one deleted
-individually fails at least one test:
+individually fails at least one test (except `_supersede()`'s `seen` set, see
+Known limits):
 
 | Guard | Test that fails |
 |---|---|

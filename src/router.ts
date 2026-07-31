@@ -48,6 +48,32 @@ interface NavigationLike {
   ): void;
 }
 
+/**
+ * Whether a link's `target` resolves to the navigable we are routing.
+ *
+ * `_onNavigate` fires for anything that stays in this navigable, so the
+ * fallback has to make the same call — and `_top`/`_parent` are *not* a fixed
+ * answer: unframed they are this navigable, framed they are somewhere else.
+ * An earlier version rejected them outright, which meant an unframed
+ * `<a target="_top">` returned without `preventDefault()` and the browser
+ * replaced the document while `_onNavigate` soft-routed.
+ */
+export const targetsThisNavigable = (
+  target: string,
+  win: {top: unknown; parent: unknown; name: string} = window
+): boolean =>
+  target === '' ||
+  target === '_self' ||
+  (target === '_top' && win.top === win) ||
+  (target === '_parent' && win.parent === win) ||
+  (target !== '_blank' && target === win.name);
+
+/** The URL up to but excluding the fragment. */
+const preFragment = (url: string): string => {
+  const i = url.indexOf('#');
+  return i === -1 ? url : url.slice(0, i);
+};
+
 const getNavigation = (): NavigationLike | undefined =>
   (window as unknown as {navigation?: NavigationLike}).navigation;
 
@@ -197,23 +223,20 @@ export class Router extends Routes {
 
   private _onClick = (e: MouseEvent) => {
     const isNonNavigationClick =
-      e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey;
+      e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey;
     if (e.defaultPrevented || isNonNavigationClick) {
       return;
     }
 
     const anchor = e
       .composedPath()
-      .find((n) => (n as HTMLElement).tagName === 'A') as
-      | HTMLAnchorElement
-      | undefined;
+      .find(
+        (n) =>
+          n instanceof HTMLAnchorElement || n instanceof HTMLAreaElement
+      ) as HTMLAnchorElement | HTMLAreaElement | undefined;
     if (
       anchor === undefined ||
-      // `_self` is the same navigable, and `_onNavigate` intercepts it —
-      // rejecting it here returns without preventDefault() and the browser
-      // replaces the document, so the two paths disagree. `_top`/`_parent`
-      // genuinely target elsewhere when framed and stay rejected.
-      (anchor.target !== '' && anchor.target !== '_self') ||
+      !targetsThisNavigable(anchor.target, window) ||
       anchor.hasAttribute('download') ||
       anchor.getAttribute('rel') === 'external'
     ) {
@@ -238,15 +261,17 @@ export class Router extends Routes {
     // (`<a href="/a">` while on `/a`) also matches, and returning there skips
     // the `preventDefault()` below, so the browser does a full
     // document-replacing reload where the Navigation API path soft re-routes.
-    // `href !== location.href` first: when the destination is byte-identical
-    // to the current URL the two do not *differ* in fragment, so
-    // `_onNavigate` reports `hashChange: false` and routes. Clicking the
-    // fragment link you are already on must therefore route here too.
+    // The browser's own fragment-navigation predicate, term for term:
+    // destination differs from current, has a fragment, and is equal ignoring
+    // the fragment. Compared on the raw serialisation rather than via
+    // `URL.pathname`/`.search`, because those normalise a bare `?` away — so
+    // `/a` -> `/a?#s` read as a fragment-only move while the browser treated
+    // it as a cross-document navigation. Same normalisation hole the earlier
+    // `hash !== '' || endsWith('#')` arm existed to patch, on the query side.
     if (
       href !== location.href &&
-      anchor.pathname === location.pathname &&
-      anchor.search === location.search &&
-      (anchor.hash !== '' || anchor.href.endsWith('#'))
+      href.indexOf('#') !== -1 &&
+      preFragment(href) === preFragment(location.href)
     ) {
       return;
     }
@@ -266,7 +291,7 @@ export class Router extends Routes {
     // entry you are already on looking dead on the fallback. The browser's own
     // navigation for it is a same-URL replace, so it adds no history entry and
     // its popstate is one `_onPopState` already no-ops.
-    if (href !== location.href || !(anchor.hash !== '' || href.endsWith('#'))) {
+    if (href !== location.href || href.indexOf('#') === -1) {
       e.preventDefault();
     }
     // pushState only when the URL actually changes — no duplicate history
