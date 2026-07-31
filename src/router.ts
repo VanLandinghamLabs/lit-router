@@ -234,7 +234,12 @@ export class Router extends Routes {
     // (`<a href="/a">` while on `/a`) also matches, and returning there skips
     // the `preventDefault()` below, so the browser does a full
     // document-replacing reload where the Navigation API path soft re-routes.
+    // `href !== location.href` first: when the destination is byte-identical
+    // to the current URL the two do not *differ* in fragment, so
+    // `_onNavigate` reports `hashChange: false` and routes. Clicking the
+    // fragment link you are already on must therefore route here too.
     if (
+      href !== location.href &&
       anchor.pathname === location.pathname &&
       anchor.search === location.search &&
       (anchor.hash !== '' || anchor.href.endsWith('#'))

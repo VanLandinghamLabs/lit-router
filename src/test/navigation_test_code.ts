@@ -123,6 +123,21 @@ export class NavStrict extends LitElement {
   }
 }
 
+/**
+ * Two Routes controllers on one host. Disconnect + reconnect makes each
+ * register the other as its child, so `_childRoutes` genuinely contains a
+ * cycle — which an unguarded recursive walk turns into a stack overflow.
+ */
+@customElement('nav-twin')
+export class NavTwin extends LitElement {
+  _a = new Routes(this, [{path: '/*', render: () => html`<span>TWIN</span>`}]);
+  _b = new Routes(this, [{path: '/*', render: () => html`<span>TWIN</span>`}]);
+
+  override render() {
+    return html`${this._a.outlet()}`;
+  }
+}
+
 /** Grandchild, for proving supersession reaches depth 3. */
 @customElement('deep-grand')
 export class DeepGrand extends LitElement {
@@ -183,6 +198,7 @@ declare global {
     'nav-child': NavChild;
     'nav-parent': NavParent;
     'nav-strict': NavStrict;
+    'nav-twin': NavTwin;
   }
 }
 
@@ -194,6 +210,7 @@ declare global {
   NavChild,
   NavParent,
   NavStrict,
+  NavTwin,
   DeepGrand,
   DeepChild,
   DeepParent,

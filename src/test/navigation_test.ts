@@ -606,6 +606,12 @@ const until = async (
       {name: 'cross-route link', start: '/a', href: '/b'},
       {name: 'link to an unrouted path', start: '/a', href: '/nope'},
       {name: 'link back to root', start: '/a', href: '/'},
+      // The guard branches on pathname and search as well as hash, so the
+      // table has to vary those or those conjuncts go unpinned — which is how
+      // a "widen the guard" change shipped here once already.
+      {name: 'cross-route link with a fragment', start: '/a', href: '/b#x'},
+      {name: 'query-only change', start: '/a', href: '/a?x=1'},
+      {name: 'the fragment link you are already on', start: '/a#s', href: '#s'},
     ];
 
     /** Click `href` from `start` and report what the router decided. */
@@ -628,16 +634,23 @@ const until = async (
         'precondition: expected path selected'
       );
 
-      // Get to the starting route.
+      // Get to the starting route. `start` may carry a fragment.
       const seed = doc.createElement('a');
       seed.href = start;
       doc.body.appendChild(seed);
       seed.click();
-      await until(`on ${start}`, () => win.location.pathname === start);
+      await until(
+        `on ${start}`,
+        () => win.location.pathname + win.location.hash === start
+      );
       await new Promise((r) => setTimeout(r, 60));
 
       (win as unknown as {__marker?: string}).__marker = 'alive';
       const before = el.entered.length;
+      let hashChanged = false;
+      win.addEventListener('hashchange', () => {
+        hashChanged = true;
+      });
 
       const a = doc.createElement('a');
       a.href = href;
@@ -645,14 +658,23 @@ const until = async (
       a.click();
       await new Promise((r) => setTimeout(r, 200));
 
-      const survived =
-        (container.contentWindow as unknown as {__marker?: string})
-          ?.__marker === 'alive';
+      const alive = container.contentWindow as unknown as {__marker?: string};
+      const survived = alive?.__marker === 'alive';
       return {
-        // Did the browser take it away from us?
-        browserHandled: !survived,
-        // Did we route in place?
-        routed: survived && el.entered.length > before,
+        // Did the browser take it away from us entirely?
+        replacedDocument: !survived,
+        // Did we route in place? `entered` only moves for routes with an
+        // `enter()` hook, so the rendered outlet is compared too — otherwise
+        // "routed" and "swallowed the click" look identical for routes
+        // without one, which is round 6's regression shape.
+        entered: survived ? el.entered.length - before : -1,
+        outlet: survived ? (el.shadowRoot?.textContent ?? '').trim() : '',
+        // Distinguishes "the browser did the fragment navigation" from
+        // "nothing happened" — both otherwise look like not-routed.
+        hashChanged: survived ? hashChanged : false,
+        url: survived
+          ? win.location.pathname + win.location.search + win.location.hash
+          : '',
       };
     };
 
@@ -669,5 +691,68 @@ const until = async (
         );
       });
     }
+  });
+
+  test('a _childRoutes cycle does not blow the stack', async () => {
+    // Reachable, not theoretical: hostDisconnected never removes the
+    // lit-routes-connected listener, so on a second connect the sibling
+    // controller claims the first as *its* child and the pair point at each
+    // other. Harmless while supersession was a single increment; once it
+    // recurses, an unguarded walk is a RangeError.
+    const {win, doc, mod} = await loadFrame();
+    win.history.pushState({}, '', '/');
+    const el = doc.createElement('nav-twin') as InstanceType<
+      typeof mod.NavTwin
+    >;
+    doc.body.appendChild(el);
+    await el.updateComplete;
+    el.remove();
+    doc.body.appendChild(el);
+    await el.updateComplete;
+
+    const probe = el as unknown as {
+      _a: {_childRoutes: unknown[]; _supersede(): void};
+      _b: {_childRoutes: unknown[]};
+    };
+    assert.isAbove(
+      probe._a._childRoutes.length + probe._b._childRoutes.length,
+      1,
+      'precondition: the reconnect produced a cycle'
+    );
+
+    // Would throw RangeError without the visited set.
+    probe._a._supersede();
+  });
+
+  test('a self-link does not add a history entry', async () => {
+    // pushState stays gated on the URL actually changing even though goto()
+    // no longer is: otherwise clicking the active nav item stacks duplicate
+    // entries and Back appears to do nothing.
+    const {win, doc} = await loadFrame();
+    delete (win as unknown as {navigation?: unknown}).navigation;
+    win.history.pushState({}, '', '/');
+    const el = doc.createElement('nav-test') as NavTest;
+    doc.body.appendChild(el);
+    await el.updateComplete;
+    assert.isFalse(el.usingNavigationApi, 'precondition: fallback path selected');
+
+    const go = doc.createElement('a');
+    go.href = '/a';
+    doc.body.appendChild(go);
+    go.click();
+    await until('on /a', () => win.location.pathname === '/a');
+    const lengthOnA = win.history.length;
+
+    const again = doc.createElement('a');
+    again.href = '/a';
+    doc.body.appendChild(again);
+    again.click();
+    await new Promise((r) => setTimeout(r, 150));
+
+    assert.equal(
+      win.history.length,
+      lengthOnA,
+      'a click on the current route must not push a duplicate entry'
+    );
   });
 });
