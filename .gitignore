@@ -1,0 +1,10 @@
+*.tsbuildinfo
+/development/
+/index.*
+/lib/
+/node_modules/
+/router.*
+/routes.*
+/test/
+development/
+node_modules/
