@@ -353,6 +353,16 @@ export class Routes implements ReactiveController {
   }
 
   hostDisconnected() {
+    // Remove the listener hostConnected added. Without this a host that is
+    // disconnected and reconnected (a repeat() reorder, a tab swap) leaves the
+    // sibling controller's listener installed, so on the second connect it
+    // claims the re-dispatching controller as *its* child and the pair point
+    // at each other — a real `_childRoutes` cycle, which recursive walks turn
+    // into a stack overflow.
+    this._host.removeEventListener(
+      RoutesConnectedEvent.eventName,
+      this._onRoutesConnected
+    );
     // When this child routes controller is disconnected because a parent
     // outlet rendered a different template, disconnecting will ensure that
     // this controller doesn't receive a tail match meant for another route.

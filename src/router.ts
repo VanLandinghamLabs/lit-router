@@ -209,7 +209,11 @@ export class Router extends Routes {
       | undefined;
     if (
       anchor === undefined ||
-      anchor.target !== '' ||
+      // `_self` is the same navigable, and `_onNavigate` intercepts it —
+      // rejecting it here returns without preventDefault() and the browser
+      // replaces the document, so the two paths disagree. `_top`/`_parent`
+      // genuinely target elsewhere when framed and stay rejected.
+      (anchor.target !== '' && anchor.target !== '_self') ||
       anchor.hasAttribute('download') ||
       anchor.getAttribute('rel') === 'external'
     ) {
@@ -255,7 +259,16 @@ export class Router extends Routes {
       return;
     }
 
-    e.preventDefault();
+    // Cancel the browser's navigation — except for the identical-URL fragment
+    // case, which we route *and* let the browser scroll to. `intercept()`
+    // defaults to `scroll: 'after-transition'`, so the Navigation API path
+    // scrolls there; preventDefault()ing here would leave clicking the TOC
+    // entry you are already on looking dead on the fallback. The browser's own
+    // navigation for it is a same-URL replace, so it adds no history entry and
+    // its popstate is one `_onPopState` already no-ops.
+    if (href !== location.href || !(anchor.hash !== '' || href.endsWith('#'))) {
+      e.preventDefault();
+    }
     // pushState only when the URL actually changes — no duplicate history
     // entry for a self-link — but route either way. `_onNavigate` re-runs
     // `enter()` for a click on the already-active route, and the two paths

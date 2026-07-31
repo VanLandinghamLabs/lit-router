@@ -599,7 +599,16 @@ const until = async (
   // satisfies one case by breaking another fails here regardless of which
   // case anyone thought to write a test for.
   suite('click decision parity between both paths', () => {
-    const CASES: Array<{name: string; start: string; href: string}> = [
+    // `attrs` matters as much as `href`: _onClick branches on target, download
+    // and rel, so a table keyed on (start, href) alone covers a projection of
+    // the handler's input domain rather than the domain. That gap is how the
+    // target="_self" divergence survived every earlier round.
+    const CASES: Array<{
+      name: string;
+      start: string;
+      href: string;
+      attrs?: Record<string, string>;
+    }> = [
       {name: 'fragment link', start: '/a', href: '#section'},
       {name: 'bare hash', start: '/a', href: '#'},
       {name: 'self link', start: '/a', href: '/a'},
@@ -612,13 +621,29 @@ const until = async (
       {name: 'cross-route link with a fragment', start: '/a', href: '/b#x'},
       {name: 'query-only change', start: '/a', href: '/a?x=1'},
       {name: 'the fragment link you are already on', start: '/a#s', href: '#s'},
+      {name: 'query added alongside a fragment', start: '/a', href: '/a?x=1#s'},
+      {name: 'dropping the fragment you are on', start: '/a#s', href: '/a'},
+      {
+        name: 'target="_self"',
+        start: '/',
+        href: '/a',
+        attrs: {target: '_self'},
+      },
+      {
+        name: 'rel="external"',
+        start: '/',
+        href: '/a',
+        attrs: {rel: 'external'},
+      },
+      {name: 'download link', start: '/', href: '/a', attrs: {download: ''}},
     ];
 
     /** Click `href` from `start` and report what the router decided. */
     const decide = async (
       useNavigationApi: boolean,
       start: string,
-      href: string
+      href: string,
+      attrs: Record<string, string> = {}
     ) => {
       const {win, doc} = await loadFrame();
       if (!useNavigationApi) {
@@ -641,7 +666,9 @@ const until = async (
       seed.click();
       await until(
         `on ${start}`,
-        () => win.location.pathname + win.location.hash === start
+        () =>
+          win.location.pathname + win.location.search + win.location.hash ===
+          start
       );
       await new Promise((r) => setTimeout(r, 60));
 
@@ -654,6 +681,9 @@ const until = async (
 
       const a = doc.createElement('a');
       a.href = href;
+      for (const [k, v] of Object.entries(attrs)) {
+        a.setAttribute(k, v);
+      }
       doc.body.appendChild(a);
       a.click();
       await new Promise((r) => setTimeout(r, 200));
@@ -680,8 +710,8 @@ const until = async (
 
     for (const c of CASES) {
       test(`${c.name}: both paths agree`, async () => {
-        const viaApi = await decide(true, c.start, c.href);
-        const viaFallback = await decide(false, c.start, c.href);
+        const viaApi = await decide(true, c.start, c.href, c.attrs);
+        const viaFallback = await decide(false, c.start, c.href, c.attrs);
         assert.deepEqual(
           viaFallback,
           viaApi,
@@ -693,12 +723,14 @@ const until = async (
     }
   });
 
-  test('a _childRoutes cycle does not blow the stack', async () => {
-    // Reachable, not theoretical: hostDisconnected never removes the
-    // lit-routes-connected listener, so on a second connect the sibling
-    // controller claims the first as *its* child and the pair point at each
-    // other. Harmless while supersession was a single increment; once it
-    // recurses, an unguarded walk is a RangeError.
+  test('a reconnect does not make sibling controllers each other\'s child', async () => {
+    // hostConnected adds the lit-routes-connected listener; without a matching
+    // removal in hostDisconnected, a host that is disconnected and reconnected
+    // (a repeat() reorder, a tab swap) leaves the sibling's listener installed,
+    // so on the second connect it claims the re-dispatching controller as its
+    // own child and the two point at each other. That cycle turns any
+    // recursive walk — and goto()'s own propagation loop — into a stack
+    // overflow.
     const {win, doc, mod} = await loadFrame();
     win.history.pushState({}, '', '/');
     const el = doc.createElement('nav-twin') as InstanceType<
@@ -714,14 +746,15 @@ const until = async (
       _a: {_childRoutes: unknown[]; _supersede(): void};
       _b: {_childRoutes: unknown[]};
     };
-    assert.isAbove(
+    assert.equal(
       probe._a._childRoutes.length + probe._b._childRoutes.length,
       1,
-      'precondition: the reconnect produced a cycle'
+      'exactly one parent/child edge, not a mutual pair'
     );
 
-    // Would throw RangeError without the visited set.
+    // Both of these would recurse forever on a cycle.
     probe._a._supersede();
+    await el._a.goto('/anything');
   });
 
   test('a self-link does not add a history entry', async () => {
@@ -753,6 +786,48 @@ const until = async (
       win.history.length,
       lengthOnA,
       'a click on the current route must not push a duplicate entry'
+    );
+  });
+
+  test('re-clicking the fragment you are on still scrolls', async () => {
+    // This case is routed rather than declined (the URLs are identical, so
+    // `hashChange` is false and _onNavigate intercepts). preventDefault() must
+    // therefore be skipped for it, or the fallback cancels the browser's
+    // fragment navigation and clicking the TOC entry you are already on looks
+    // dead — while the Navigation API path still scrolls, because intercept()
+    // defaults to scroll: 'after-transition'.
+    const {win, doc} = await loadFrame();
+    delete (win as unknown as {navigation?: unknown}).navigation;
+    win.history.pushState({}, '', '/');
+    const el = doc.createElement('nav-test') as NavTest;
+    doc.body.appendChild(el);
+    await el.updateComplete;
+    assert.isFalse(el.usingNavigationApi, 'precondition: fallback path selected');
+
+    // Light-DOM scroll target — fragments do not reach into shadow roots.
+    const spacer = doc.createElement('div');
+    spacer.style.height = '3000px';
+    doc.body.appendChild(spacer);
+    const target = doc.createElement('div');
+    target.id = 's';
+    target.textContent = 'target';
+    doc.body.appendChild(target);
+
+    const frag = doc.createElement('a');
+    frag.href = '#s';
+    doc.body.appendChild(frag);
+    frag.click();
+    await until('scrolled to the target', () => win.scrollY > 0);
+
+    // Back to the top, then click the very same link again.
+    win.scrollTo(0, 0);
+    await until('back at the top', () => win.scrollY === 0);
+    frag.click();
+
+    await until(
+      're-clicking the current fragment scrolls again',
+      () => win.scrollY > 0,
+      3000
     );
   });
 });

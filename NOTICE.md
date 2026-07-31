@@ -68,6 +68,13 @@ it is now answered:
 
 ### `src/routes.ts` — behavioural changes
 
+- `hostDisconnected` removes the `lit-routes-connected` listener that
+  `hostConnected` adds. Upstream leaves it, so a host that is disconnected and
+  reconnected (a `repeat()` reorder, a tab swap) ends up with two sibling
+  controllers registered as each other's child — a real `_childRoutes` cycle,
+  which turns `goto()`'s propagation loop and any recursive walk into a stack
+  overflow. `_supersede()` also carries a visited set as defence in depth.
+
 - `goto(pathname, options?)` accepts `options.signal`; an aborted signal after
   `enter()` resolves makes `goto()` return without committing.
 - **Per-controller last-goto-wins counter.** The signal alone is not enough: a
@@ -108,11 +115,6 @@ it is now answered:
   "decline what we cannot render" fix does not reach that configuration.
 - `goto()` still ignores the query string (upstream limitation), so a GET form
   whose action matches a route is intercepted and loses its query.
-- `goto()`'s child-propagation loop shares the `_childRoutes` cycle exposure
-  that `_supersede()` guards against, and is unguarded. It is upstream's own
-  loop and needs a narrower cycle (both siblings must match the tail); a
-  re-entrancy flag was tried and reverted, because it also swallows the
-  legitimate concurrent `goto()` that supersession depends on.
 - A child skipped because it cannot render the new tail keeps its previously
   *committed* outlet — it is superseded (no in-flight navigation can commit)
   but not cleared, so it goes on rendering the route the URL has left. Upstream
@@ -133,7 +135,7 @@ Runner so it stands alone. Test changes:
 - Two `(r: RouteConfig)` annotations added in `router_test.ts` (upstream relied
   on monorepo-wide inference). **Otherwise upstream's 6 tests are unmodified and
   pass**, which is the main evidence that the rewrite preserves behaviour.
-- 30 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
+- 36 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
   The first asserts the suite is actually running against `window.navigation`
   rather than silently falling back — without it the rest would pass against the
   legacy path and prove nothing. Two more delete `window.navigation` from the
@@ -143,7 +145,7 @@ Runner so it stands alone. Test changes:
 
 ## Verified
 
-`npm test` → 36 passed (6 upstream + 30 new), Chromium via Playwright.
+`npm test` → 42 passed (6 upstream + 36 new), Chromium via Playwright.
 
 Run `npm run clean` before a mutation check: the build is `composite`/
 `incremental`, and a stale `development/` can contain a hunk's comment without
@@ -164,10 +166,18 @@ broke self-links into full page reloads), then narrowed until self-links worked
 re-routes). Both regressions shipped. The parity table catches both — and the
 second one is caught by *nothing else in the suite*.
 
-Add a row here before touching `_onClick`. The table must keep varying
-*pathname and search*, not just the fragment: with every row starting at `/a`
-and targeting `/a`, those conjuncts go unpinned and a widened guard passes —
-which is how one of the shipped regressions got through.
+Add a row here before touching `_onClick`. Two things make the table actually
+bite, both learned the hard way:
+
+- **Vary pathname and search, not just the fragment.** With every row starting
+  at `/a` and targeting `/a`, those conjuncts go unpinned and a widened guard
+  passes — how one shipped regression got through.
+- **Vary the anchor's attributes.** `_onClick` branches on `target`, `download`
+  and `rel`, so a table keyed on `(start, href)` covers a *projection* of the
+  handler's input domain, not the domain. `target="_self"` diverged through
+  every earlier round because of exactly this.
+
+Every conjunct of the fragment guard is individually mutation-pinned by a row.
 
 Every guard added by this fork is mutation-checked — each one deleted
 individually fails at least one test:
@@ -187,7 +197,9 @@ individually fails at least one test:
 | `goto()` bookkeeping sync | Back after a programmatic pushState still routes |
 | self-link hash condition | a self-link does not reload the document |
 | recursive `_supersede()` | supersession reaches a grandchild under a skipped child |
-| `_supersede()` cycle guard | a _childRoutes cycle does not blow the stack |
+| `hostDisconnected` listener removal | a reconnect does not make sibling controllers each other's child |
+| `target="_self"` acceptance | click decision parity: target="_self" |
+| conditional `preventDefault()` | re-clicking the fragment you are on still scrolls |
 | pushState gate in `_onClick` | a self-link does not add a history entry |
 | identical-URL clause in the fragment guard | click decision parity: the fragment link you are already on |
 
