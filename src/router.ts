@@ -25,10 +25,16 @@ interface NavigateEventLike {
   readonly formData: FormData | null;
   readonly navigationType: 'push' | 'replace' | 'reload' | 'traverse';
   readonly signal: AbortSignal;
-  readonly destination: {readonly url: string; readonly sameDocument: boolean};
+  readonly destination: {readonly url: string};
   /** Not in every engine yet; used only as a best-effort `rel` check. */
   readonly sourceElement?: Element | null;
-  intercept(options: {handler?: () => Promise<void>}): void;
+  intercept(options: InterceptOptions & {handler?: () => Promise<void>}): void;
+}
+
+/** The subset of `NavigationInterceptOptions` this router forwards. */
+export interface InterceptOptions {
+  focusReset?: 'after-transition' | 'manual';
+  scroll?: 'after-transition' | 'manual';
 }
 
 interface NavigationLike {
@@ -84,10 +90,7 @@ export class Router extends Routes {
    * gives the browser's default scroll and focus handling, which the legacy
    * path could not offer at all.
    */
-  interceptOptions?: {
-    focusReset?: 'after-transition' | 'manual';
-    scroll?: 'after-transition' | 'manual';
-  };
+  interceptOptions?: InterceptOptions;
 
   private _usingNavigationApi = false;
 
@@ -204,10 +207,18 @@ export class Router extends Routes {
       return;
     }
 
+    // Same gate as the Navigation API path, and it matters more here: this
+    // handler calls preventDefault() before navigating, so swallowing a link
+    // we cannot render would stop the browser doing the real navigation *and*
+    // strand the URL. Both paths this package ships must agree.
+    if (!this.hasRouteFor(anchor.pathname)) {
+      return;
+    }
+
     e.preventDefault();
     if (href !== location.href) {
       window.history.pushState({}, '', href);
-      this.goto(anchor.pathname);
+      void this.goto(anchor.pathname).catch(() => {});
     }
   };
 

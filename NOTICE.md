@@ -76,11 +76,27 @@ it is now answered:
   already finished, holding a signal that will never abort. Without the counter
   a slow first child load commits over a newer one. This also keeps `Routes`
   correct standalone, with no `Router` and no Navigation API involved.
-- **Child `goto()`s are awaited**, so `intercept()`'s handler — and therefore
-  `navigation.finished` — covers the whole route tree rather than just the top
-  level.
+- Child `goto()`s stay **unawaited** (as upstream), with errors swallowed. An
+  earlier revision awaited them to make `navigation.finished` cover the whole
+  tree; that was wrong twice over — at that point `requestUpdate()` has not run,
+  so `_childRoutes` still holds the *outgoing* branch, and awaiting it both
+  gated the parent's outlet swap on an `enter()` for a tail that child would
+  never render, and let its `No route found` throw strand the parent entirely.
+  Nested supersession is the counter's job, not the await's.
 - New `hasRouteFor(pathname)`, used by `Router` to decline what it cannot
   render.
+
+### Known limits
+
+- `navigation.finished` covers the top-level route, not nested ones. Making it
+  cover the tree needs awaiting the children the navigation is moving *to*,
+  which means awaiting past `requestUpdate()` and the host's update cycle — a
+  materially bigger change than it looks.
+- `hasRouteFor()` is a no-op for apps that configure a root `fallback`, since
+  every path then matches. That is the app's stated intent, but it means the
+  "decline what we cannot render" fix does not reach that configuration.
+- `goto()` still ignores the query string (upstream limitation), so a GET form
+  whose action matches a route is intercepted and loses its query.
 
 ### Build and tests
 
@@ -95,14 +111,17 @@ Runner so it stands alone. Test changes:
 - Two `(r: RouteConfig)` annotations added in `router_test.ts` (upstream relied
   on monorepo-wide inference). **Otherwise upstream's 6 tests are unmodified and
   pass**, which is the main evidence that the rewrite preserves behaviour.
-- 10 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
+- 12 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
   The first asserts the suite is actually running against `window.navigation`
   rather than silently falling back — without it the rest would pass against the
-  legacy path and prove nothing.
+  legacy path and prove nothing. Two more delete `window.navigation` from the
+  frame realm before mounting, which is the only way to genuinely exercise the
+  retained fallback — Chromium always has the API, so before this both legacy
+  handlers could be booby-trapped without failing a single test.
 
 ## Verified
 
-`npm test` → 17 passed (6 upstream + 11 new), Chromium via Playwright.
+`npm test` → 18 passed (6 upstream + 12 new), Chromium via Playwright.
 
 Every guard added by this fork is mutation-checked — each one deleted
 individually fails at least one test:
@@ -111,10 +130,10 @@ individually fails at least one test:
 |---|---|
 | per-controller goto counter | a superseded navigation does not win a NESTED outlet |
 | `signal.aborted` check | an aborted signal stands a goto down even with no newer goto |
-| `await` on child `goto()`s | navigation.finished waits for NESTED routes |
 | `navigationType === 'reload'` filter | a reload is left alone |
 | `rel="external"` filter | rel="external" opts out on the Navigation API path too |
-| `hasRouteFor()` gate | a path with no route is left to the browser |
+| `hasRouteFor()` gate (Navigation API path) | a path with no route is left to the browser |
+| `hasRouteFor()` gate (fallback click path) | the fallback path also declines a path it cannot render |
 
 ## Merging upstream later
 

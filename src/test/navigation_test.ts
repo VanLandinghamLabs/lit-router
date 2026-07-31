@@ -297,42 +297,57 @@ const until = async (
     );
   });
 
-  test('navigation.finished waits for NESTED routes, not just the top level', async () => {
-    // goto() awaits its child controllers, so intercept()'s handler — and
-    // therefore navigation.finished — covers the whole tree. Without that,
-    // `await navigate(...).finished` would resolve while a nested view was
-    // still loading, which makes the API's central guarantee misleading for
-    // anyone who awaits it before measuring or asserting.
-    const {win, mod} = await mountParent();
-    mod.NavChild.slowPaths.add('a');
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const nav = (win as any).navigation;
-    // First hop mounts the child (its initial goto comes from
-    // _onRoutesConnected). The second is the one whose finished we measure,
-    // because by then the child controller is registered as a child.
-    await nav.navigate('/x/b', {history: 'push'}).finished;
-    mod.NavChild.entered.length = 0;
+  test('falls back to click + popstate when the Navigation API is absent', async () => {
+    // The fallback exists for engines older than Baseline (Jan 2026) and was
+    // completely uncovered: Chromium always has window.navigation, so both
+    // legacy handlers could be booby-trapped without failing a single test.
+    // Deleting the API from the frame realm before the element connects gives
+    // a genuine legacy-path run.
+    const {win, doc} = await loadFrame();
+    delete (win as unknown as {navigation?: unknown}).navigation;
+    win.history.pushState({}, '', '/');
+    const el = doc.createElement('nav-test') as NavTest;
+    doc.body.appendChild(el);
+    await el.updateComplete;
 
-    const result = nav.navigate('/x/a', {history: 'push'});
-    let finished = false;
-    result.finished.then(
-      () => {
-        finished = true;
-      },
-      () => {
-        finished = true;
-      }
+    assert.isFalse(el.usingNavigationApi, 'precondition: fallback path selected');
+
+    const a = doc.createElement('a');
+    a.href = '/a';
+    a.textContent = 'go';
+    doc.body.appendChild(a);
+    a.click();
+    await until('the click handler routed', () => el.entered.includes('/a'));
+    await el.updateComplete;
+
+    assert.equal(win.location.pathname, '/a');
+    assert.include(el.shadowRoot!.textContent, 'A');
+  });
+
+  test('the fallback path also declines a path it cannot render', async () => {
+    // _onClick calls preventDefault() before navigating, so swallowing an
+    // unrenderable link here stops the browser doing the real navigation too —
+    // strictly worse than the Navigation API path's version of the same bug.
+    const {win, doc} = await loadFrame();
+    delete (win as unknown as {navigation?: unknown}).navigation;
+    win.history.pushState({}, '', '/');
+    const el = doc.createElement('nav-strict') as HTMLElement;
+    doc.body.appendChild(el);
+    await (el as unknown as {updateComplete: Promise<unknown>}).updateComplete;
+
+    const a = doc.createElement('a');
+    a.href = '/not-a-route';
+    a.textContent = 'go';
+    doc.body.appendChild(a);
+    (win as unknown as {__marker?: string}).__marker = 'alive';
+    a.click();
+    await until(
+      'the browser performed a real navigation',
+      () =>
+        (container.contentWindow as unknown as {__marker?: string})
+          ?.__marker === undefined,
+      5000
     );
-
-    await until('child a entered', () => mod.NavChild.entered.includes('a'));
-    await new Promise((r) => setTimeout(r, 50));
-    assert.isFalse(
-      finished,
-      'navigation must not finish while a nested enter() is pending'
-    );
-
-    mod.NavChild.gates.get('a')?.();
-    await until('navigation finished once the child resolved', () => finished);
   });
 });

@@ -112,8 +112,6 @@ export class Routes implements ReactiveController {
    */
   /** Monotonic goto counter; see the last-goto-wins note in goto(). */
   private _gotoSeq = 0;
-  /** Signal of the navigation currently being routed, for late-mounting children. */
-  private _currentSignal: AbortSignal | undefined;
 
   private _currentPathname: string | undefined;
   private _currentRoute: RouteConfig | undefined;
@@ -177,7 +175,6 @@ export class Routes implements ReactiveController {
     // completely disregard the origin for now. The click handler only does
     // an in-page navigation if the origin matches anyway.
     const signal = options?.signal;
-    this._currentSignal = signal;
     // Last-goto-wins, per controller. The navigation signal alone is not
     // enough: a child controller mounts as a *result* of its parent's render,
     // so its first goto() comes from `_onRoutesConnected` — after the parent's
@@ -227,21 +224,23 @@ export class Routes implements ReactiveController {
           : pathname.substring(0, pathname.length - tailGroup.length);
     }
 
-    // Propagate the tail match to children.
+    // Propagate the tail match to children — deliberately NOT awaited.
     //
-    // Awaited, unlike upstream. A child's `enter()` is just as async as ours,
-    // and `Router` resolves its `intercept()` handler when this returns — so
-    // firing children off unawaited finishes the navigation while a nested
-    // route is still resolving. Its signal is then never aborted (a *finished*
-    // navigation has nothing left to cancel), and the superseded child commits
-    // anyway. That reintroduces the exact race this fork exists to remove, one
-    // level down, on the nested routes real apps actually use.
+    // Awaiting looks like it would make `navigation.finished` cover the whole
+    // tree, and an earlier revision of this fork did it. It is wrong twice
+    // over. At this point `requestUpdate()` has not run, so `_childRoutes`
+    // still holds the *outgoing* branch's controller: awaiting it gates the
+    // parent's outlet swap on an `enter()` for a tail that controller will
+    // never render (a hung one blocks the navigation forever), and if that
+    // child has no route for the new tail its `No route found` throw
+    // propagates out of here and `requestUpdate()` below never runs — URL
+    // committed, outlet stranded, i.e. this fork's own thesis bug one level
+    // down. Nested supersession is handled by the goto counter above, not by
+    // awaiting. Errors are swallowed rather than left as unhandled rejections.
     if (tailGroup !== undefined) {
-      await Promise.all(
-        this._childRoutes.map((childRoutes) =>
-          childRoutes.goto(tailGroup as string, options)
-        )
-      );
+      for (const childRoutes of this._childRoutes) {
+        void childRoutes.goto(tailGroup, options).catch(() => {});
+      }
     }
     this._host.requestUpdate();
   }
@@ -337,9 +336,13 @@ export class Routes implements ReactiveController {
 
     const tailGroup = getTailGroup(this._currentParams);
     if (tailGroup !== undefined) {
-      // A child that mounts after its parent committed still gets the current
-      // navigation's signal, so a stop/supersede reaches it too.
-      childRoutes.goto(tailGroup, {signal: this._currentSignal});
+      // No signal here on purpose. The parent commits its own state before
+      // children run, so by the time a late child mounts the navigation may
+      // already have been aborted — handing it that signal makes it stand down
+      // with no newer goto() ever arriving to correct it, leaving the nested
+      // outlet blank permanently. The goto counter covers what matters
+      // (supersession by a newer goto).
+      void childRoutes.goto(tailGroup).catch(() => {});
     }
   };
 }
