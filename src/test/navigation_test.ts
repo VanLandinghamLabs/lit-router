@@ -75,6 +75,8 @@ const until = async (
   const mountParent = () =>
     mountTag<HTMLElement & {updateComplete: Promise<unknown>}>('nav-parent');
   const mountStrict = () => mountTag<HTMLElement>('nav-strict');
+  const mountDeep = () =>
+    mountTag<HTMLElement & {updateComplete: Promise<unknown>}>('deep-parent');
 
   test('the suite is exercising the Navigation API, not the fallback', async () => {
     const {el, win} = await mount();
@@ -390,9 +392,12 @@ const until = async (
     const frag = doc.createElement('a');
     frag.href = '#section';
     doc.body.appendChild(frag);
+    // Captured BEFORE the click: popstate fires synchronously inside click()
+    // in Chromium, so reading it afterwards is past the increment this is
+    // meant to detect and the assertion can never fail.
+    const enteredBeforeFragment = el.entered.length;
     frag.click();
 
-    const enteredBeforeFragment = el.entered.length;
     await until('the browser performed the fragment navigation', () => hashChanged);
     await new Promise((r) => setTimeout(r, 100));
     assert.equal(win.location.hash, '#section');
@@ -480,5 +485,101 @@ const until = async (
 
     void doc;
     assert.deepEqual(errors, [], 'no uncaught error for an unrenderable tail');
+  });
+
+  test('Back after a programmatic pushState still routes', async () => {
+    // The documented programmatic-navigation pattern is
+    // history.pushState() + goto(), which no fallback handler observes. If the
+    // popstate fragment no-op keys on state only the handlers maintain, that
+    // field stays on the last *clicked* URL and a Back afterwards looks like a
+    // fragment-only move — skipped, leaving the outlet stranded.
+    const {win, doc} = await loadFrame();
+    delete (win as unknown as {navigation?: unknown}).navigation;
+    win.history.pushState({}, '', '/');
+    const el = doc.createElement('nav-test') as NavTest;
+    doc.body.appendChild(el);
+    await el.updateComplete;
+    assert.isFalse(el.usingNavigationApi, 'precondition: fallback path selected');
+
+    win.history.pushState({}, '', '/a');
+    await el._router.goto('/a');
+    await el.updateComplete;
+    assert.include(el.shadowRoot!.textContent, 'A');
+
+    win.history.back();
+    await until('routed back to root', () => win.location.pathname === '/');
+    await new Promise((r) => setTimeout(r, 150));
+    await el.updateComplete;
+
+    assert.include(
+      el.shadowRoot!.textContent,
+      'Root',
+      'Back must re-route, not be mistaken for a fragment-only move'
+    );
+  });
+
+  test('a self-link does not reload the document', async () => {
+    // The fragment guard must not swallow `<a href="/a">` clicked while on
+    // /a: returning there skips preventDefault(), so the browser performs a
+    // real document-replacing navigation where the Navigation API path soft
+    // re-routes in place.
+    const {win, doc} = await loadFrame();
+    delete (win as unknown as {navigation?: unknown}).navigation;
+    win.history.pushState({}, '', '/');
+    const el = doc.createElement('nav-test') as NavTest;
+    doc.body.appendChild(el);
+    await el.updateComplete;
+
+    const go = doc.createElement('a');
+    go.href = '/a';
+    doc.body.appendChild(go);
+    go.click();
+    await until('on /a', () => el.entered.includes('/a'));
+
+    (win as unknown as {__marker?: string}).__marker = 'alive';
+    const again = doc.createElement('a');
+    again.href = '/a';
+    doc.body.appendChild(again);
+    again.click();
+    await new Promise((r) => setTimeout(r, 200));
+
+    assert.equal(
+      (container.contentWindow as unknown as {__marker?: string})?.__marker,
+      'alive',
+      'the document must survive a click on a link to the current route'
+    );
+  });
+
+  test('supersession reaches a grandchild under a skipped child', async () => {
+    // A skipped child never runs its own propagation loop, so bumping only its
+    // counter leaves an in-flight grandchild enter() current — the same defect
+    // one level deeper than the child case.
+    const {el, win, mod} = await mountDeep();
+    mod.DeepGrand.slowPaths.add('s');
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nav = (win as any).navigation;
+    nav.navigate('/y/m/s', {history: 'push'});
+    await until('grandchild s entered', () => mod.DeepGrand.entered.includes('s'));
+
+    // 'zzz' matches /y/* but not the child's `m/*`, so the child is skipped.
+    nav.navigate('/y/zzz', {history: 'push'});
+    await new Promise((r) => setTimeout(r, 100));
+
+    mod.DeepGrand.gates.get('s')?.();
+    await new Promise((r) => setTimeout(r, 200));
+    await el.updateComplete;
+
+    const text =
+      el.shadowRoot
+        ?.querySelector('deep-child')
+        ?.shadowRoot?.querySelector('deep-grand')
+        ?.shadowRoot?.textContent ?? '';
+    assert.equal(win.location.pathname, '/y/zzz');
+    assert.notInclude(
+      text,
+      'GRAND-S',
+      'an abandoned grandchild route must not commit after the URL moved on'
+    );
   });
 });

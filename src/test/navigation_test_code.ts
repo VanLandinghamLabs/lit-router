@@ -123,8 +123,62 @@ export class NavStrict extends LitElement {
   }
 }
 
+/** Grandchild, for proving supersession reaches depth 3. */
+@customElement('deep-grand')
+export class DeepGrand extends LitElement {
+  static gates = new Map<string, () => void>();
+  static entered: string[] = [];
+  static slowPaths = new Set<string>();
+
+  private _hold = async (path: string): Promise<boolean> => {
+    DeepGrand.entered.push(path);
+    if (DeepGrand.slowPaths.has(path)) {
+      await new Promise<void>((resolve) => DeepGrand.gates.set(path, resolve));
+    }
+    return true;
+  };
+
+  _routes = new Routes(this, [
+    {
+      path: 's',
+      enter: () => this._hold('s'),
+      render: () => html`<span>GRAND-S</span>`,
+    },
+  ]);
+
+  override render() {
+    return html`${this._routes.outlet()}`;
+  }
+}
+
+@customElement('deep-child')
+export class DeepChild extends LitElement {
+  _routes = new Routes(this, [
+    {path: 'm/*', render: () => html`<deep-grand></deep-grand>`},
+  ]);
+
+  override render() {
+    return html`${this._routes.outlet()}`;
+  }
+}
+
+@customElement('deep-parent')
+export class DeepParent extends LitElement {
+  _router = new Router(this, [
+    {path: '/', render: () => html`<h2>Root</h2>`},
+    {path: '/y/*', render: () => html`<deep-child></deep-child>`},
+  ]);
+
+  override render() {
+    return html`${this._router.outlet()}`;
+  }
+}
+
 declare global {
   interface HTMLElementTagNameMap {
+    'deep-grand': DeepGrand;
+    'deep-child': DeepChild;
+    'deep-parent': DeepParent;
     'nav-test': NavTest;
     'nav-child': NavChild;
     'nav-parent': NavParent;
@@ -140,4 +194,7 @@ declare global {
   NavChild,
   NavParent,
   NavStrict,
+  DeepGrand,
+  DeepChild,
+  DeepParent,
 };

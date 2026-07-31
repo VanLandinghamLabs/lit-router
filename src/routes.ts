@@ -289,6 +289,13 @@ export class Routes implements ReactiveController {
    */
   private _supersede(): void {
     this._gotoSeq++;
+    // Recursive: on the navigating branch the child's own propagation loop
+    // reaches the grandchildren, but a skipped child never runs one — so
+    // without this an in-flight grandchild `enter()` stays current and commits
+    // over a URL that has moved on, the same defect one level deeper.
+    for (const child of this._childRoutes) {
+      child._supersede();
+    }
   }
 
   /**

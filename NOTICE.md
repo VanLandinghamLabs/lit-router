@@ -108,6 +108,12 @@ it is now answered:
   "decline what we cannot render" fix does not reach that configuration.
 - `goto()` still ignores the query string (upstream limitation), so a GET form
   whose action matches a route is intercepted and loses its query.
+- A child skipped because it cannot render the new tail keeps its previously
+  *committed* outlet — it is superseded (no in-flight navigation can commit)
+  but not cleared, so it goes on rendering the route the URL has left. Upstream
+  had the same end state by a different route (`No route found` threw before
+  any state changed). Clearing it needs `_currentRoute` reset plus a host
+  update, which is a behaviour change rather than a bug fix.
 
 ### Build and tests
 
@@ -122,7 +128,7 @@ Runner so it stands alone. Test changes:
 - Two `(r: RouteConfig)` annotations added in `router_test.ts` (upstream relied
   on monorepo-wide inference). **Otherwise upstream's 6 tests are unmodified and
   pass**, which is the main evidence that the rewrite preserves behaviour.
-- 16 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
+- 19 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
   The first asserts the suite is actually running against `window.navigation`
   rather than silently falling back — without it the rest would pass against the
   legacy path and prove nothing. Two more delete `window.navigation` from the
@@ -132,7 +138,7 @@ Runner so it stands alone. Test changes:
 
 ## Verified
 
-`npm test` → 22 passed (6 upstream + 16 new), Chromium via Playwright.
+`npm test` → 25 passed (6 upstream + 19 new), Chromium via Playwright.
 
 Run `npm run clean` before a mutation check: the build is `composite`/
 `incremental`, and a stale `development/` can contain a hunk's comment without
@@ -153,6 +159,9 @@ individually fails at least one test:
 | `_supersede()` on a skipped child | a child that cannot render the new tail is still superseded |
 | `hasRouteFor` filter (late-mount path) | a deep link under a wildcard the child cannot render does not throw |
 | popstate fragment no-op | a bare "#" link is left to the browser as well |
+| `goto()` bookkeeping sync | Back after a programmatic pushState still routes |
+| self-link hash condition | a self-link does not reload the document |
+| recursive `_supersede()` | supersession reaches a grandchild under a skipped child |
 
 ## Merging upstream later
 

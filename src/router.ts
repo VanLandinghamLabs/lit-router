@@ -94,9 +94,24 @@ export class Router extends Routes {
 
   private _usingNavigationApi = false;
   /** Fragment-change detection for the fallback popstate handler. */
-  private _lastRoutedPath = typeof location === 'undefined' ? '' : location.pathname;
-  private _lastRoutedSearch =
-    typeof location === 'undefined' ? '' : location.search;
+  private _lastRoutedPath = location.pathname;
+  private _lastRoutedSearch = location.search;
+
+  /**
+   * Records what was actually routed, for the fallback popstate handler.
+   *
+   * It has to live here rather than in the individual handlers: an app may
+   * navigate with `history.pushState()` + `goto()` directly (the documented
+   * pattern for programmatic navigation), which no handler observes. Tracking
+   * it there instead left the field on the last *clicked* URL, so a Back after
+   * a programmatic navigation looked like a fragment-only move and was
+   * skipped — outlet stranded, address bar moved, i.e. this fork's own bug.
+   */
+  override async goto(pathname: string, options?: {signal?: AbortSignal}) {
+    this._lastRoutedPath = pathname;
+    this._lastRoutedSearch = location.search;
+    return super.goto(pathname, options);
+  }
 
   override hostConnected() {
     super.hostConnected();
@@ -214,15 +229,17 @@ export class Router extends Routes {
     // A fragment-only link is the browser's job — `_onNavigate` declines it
     // via `hashChange`, and without this the fallback would preventDefault()
     // (so no scroll-to-fragment) and re-run the current route's `enter()`.
-    // Compare everything *except* the fragment, rather than testing for a
-    // non-empty hash: `<a href="#">` — the commonest fragment link there is —
-    // has an empty `anchor.hash`, yet `_onNavigate` reports `hashChange: true`
-    // for it and declines. The extra case this admits (an href identical to
-    // the current URL) is already a no-op via the `href !== location.href`
-    // check below.
+    // Fragment-only move: leave it to the browser, as `_onNavigate` does via
+    // `hashChange`. `anchor.hash` is `''` for `<a href="#">` — the commonest
+    // fragment link there is — so the `endsWith('#')` arm is needed to catch
+    // it. The hash test itself must stay: without it a plain self-link
+    // (`<a href="/a">` while on `/a`) also matches, and returning there skips
+    // the `preventDefault()` below, so the browser does a full
+    // document-replacing reload where the Navigation API path soft re-routes.
     if (
       anchor.pathname === location.pathname &&
-      anchor.search === location.search
+      anchor.search === location.search &&
+      (anchor.hash !== '' || anchor.href.endsWith('#'))
     ) {
       return;
     }
@@ -238,8 +255,6 @@ export class Router extends Routes {
     e.preventDefault();
     if (href !== location.href) {
       window.history.pushState({}, '', href);
-      this._lastRoutedPath = anchor.pathname;
-      this._lastRoutedSearch = anchor.search;
       void this.goto(anchor.pathname).catch((err) => {
         queueMicrotask(() => {
           throw err;
@@ -258,8 +273,6 @@ export class Router extends Routes {
     if (pathname === this._lastRoutedPath && search === this._lastRoutedSearch) {
       return;
     }
-    this._lastRoutedPath = pathname;
-    this._lastRoutedSearch = search;
     void this.goto(pathname).catch((err) => {
       queueMicrotask(() => {
         throw err;
