@@ -226,11 +226,9 @@ export class Router extends Routes {
       return;
     }
 
-    // A fragment-only link is the browser's job — `_onNavigate` declines it
-    // via `hashChange`, and without this the fallback would preventDefault()
-    // (so no scroll-to-fragment) and re-run the current route's `enter()`.
     // Fragment-only move: leave it to the browser, as `_onNavigate` does via
-    // `hashChange`. `anchor.hash` is `''` for `<a href="#">` — the commonest
+    // `hashChange`. Otherwise the fallback would preventDefault() (so no
+    // scroll-to-fragment) and re-run the current route's `enter()`. `anchor.hash` is `''` for `<a href="#">` — the commonest
     // fragment link there is — so the `endsWith('#')` arm is needed to catch
     // it. The hash test itself must stay: without it a plain self-link
     // (`<a href="/a">` while on `/a`) also matches, and returning there skips
@@ -253,14 +251,18 @@ export class Router extends Routes {
     }
 
     e.preventDefault();
+    // pushState only when the URL actually changes — no duplicate history
+    // entry for a self-link — but route either way. `_onNavigate` re-runs
+    // `enter()` for a click on the already-active route, and the two paths
+    // must reach the same decision for the same (URL, href) pair.
     if (href !== location.href) {
       window.history.pushState({}, '', href);
-      void this.goto(anchor.pathname).catch((err) => {
-        queueMicrotask(() => {
-          throw err;
-        });
-      });
     }
+    void this.goto(anchor.pathname).catch((err) => {
+      queueMicrotask(() => {
+        throw err;
+      });
+    });
   };
 
   private _onPopState = (_e: PopStateEvent) => {

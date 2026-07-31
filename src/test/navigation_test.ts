@@ -530,6 +530,8 @@ const until = async (
     doc.body.appendChild(el);
     await el.updateComplete;
 
+    assert.isFalse(el.usingNavigationApi, 'precondition: fallback path selected');
+
     const go = doc.createElement('a');
     go.href = '/a';
     doc.body.appendChild(go);
@@ -581,5 +583,91 @@ const until = async (
       'GRAND-S',
       'an abandoned grandchild route must not commit after the URL moved on'
     );
+  });
+
+  // ── Click-decision parity ────────────────────────────────────────────────
+  //
+  // The per-case tests above each pin the symptom a specific review named, and
+  // that is how this fork kept breaking a sibling case while making the newest
+  // test pass: widen the guard until bare "#" works (breaks self-links),
+  // narrow it until self-links work (leaves the fallback a no-op). Each test
+  // was satisfiable without the invariant holding.
+  //
+  // The invariant is: for any (current URL, anchor href) pair, `_onNavigate`
+  // and the legacy `_onClick` reach the same decision — routed in place, or
+  // handed to the browser. This table asserts that directly, so a fix that
+  // satisfies one case by breaking another fails here regardless of which
+  // case anyone thought to write a test for.
+  suite('click decision parity between both paths', () => {
+    const CASES: Array<{name: string; start: string; href: string}> = [
+      {name: 'fragment link', start: '/a', href: '#section'},
+      {name: 'bare hash', start: '/a', href: '#'},
+      {name: 'self link', start: '/a', href: '/a'},
+      {name: 'cross-route link', start: '/a', href: '/b'},
+      {name: 'link to an unrouted path', start: '/a', href: '/nope'},
+      {name: 'link back to root', start: '/a', href: '/'},
+    ];
+
+    /** Click `href` from `start` and report what the router decided. */
+    const decide = async (
+      useNavigationApi: boolean,
+      start: string,
+      href: string
+    ) => {
+      const {win, doc} = await loadFrame();
+      if (!useNavigationApi) {
+        delete (win as unknown as {navigation?: unknown}).navigation;
+      }
+      win.history.pushState({}, '', '/');
+      const el = doc.createElement('nav-test') as NavTest;
+      doc.body.appendChild(el);
+      await el.updateComplete;
+      assert.equal(
+        el.usingNavigationApi,
+        useNavigationApi,
+        'precondition: expected path selected'
+      );
+
+      // Get to the starting route.
+      const seed = doc.createElement('a');
+      seed.href = start;
+      doc.body.appendChild(seed);
+      seed.click();
+      await until(`on ${start}`, () => win.location.pathname === start);
+      await new Promise((r) => setTimeout(r, 60));
+
+      (win as unknown as {__marker?: string}).__marker = 'alive';
+      const before = el.entered.length;
+
+      const a = doc.createElement('a');
+      a.href = href;
+      doc.body.appendChild(a);
+      a.click();
+      await new Promise((r) => setTimeout(r, 200));
+
+      const survived =
+        (container.contentWindow as unknown as {__marker?: string})
+          ?.__marker === 'alive';
+      return {
+        // Did the browser take it away from us?
+        browserHandled: !survived,
+        // Did we route in place?
+        routed: survived && el.entered.length > before,
+      };
+    };
+
+    for (const c of CASES) {
+      test(`${c.name}: both paths agree`, async () => {
+        const viaApi = await decide(true, c.start, c.href);
+        const viaFallback = await decide(false, c.start, c.href);
+        assert.deepEqual(
+          viaFallback,
+          viaApi,
+          `${c.start} + href="${c.href}": fallback ${JSON.stringify(
+            viaFallback
+          )} vs Navigation API ${JSON.stringify(viaApi)}`
+        );
+      });
+    }
   });
 });

@@ -128,7 +128,7 @@ Runner so it stands alone. Test changes:
 - Two `(r: RouteConfig)` annotations added in `router_test.ts` (upstream relied
   on monorepo-wide inference). **Otherwise upstream's 6 tests are unmodified and
   pass**, which is the main evidence that the rewrite preserves behaviour.
-- 19 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
+- 25 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
   The first asserts the suite is actually running against `window.navigation`
   rather than silently falling back — without it the rest would pass against the
   legacy path and prove nothing. Two more delete `window.navigation` from the
@@ -138,11 +138,28 @@ Runner so it stands alone. Test changes:
 
 ## Verified
 
-`npm test` → 25 passed (6 upstream + 19 new), Chromium via Playwright.
+`npm test` → 31 passed (6 upstream + 25 new), Chromium via Playwright.
 
 Run `npm run clean` before a mutation check: the build is `composite`/
 `incremental`, and a stale `development/` can contain a hunk's comment without
 its code, greening the suite against output that lacks the change.
+
+### Click-decision parity
+
+`src/test/navigation_test.ts` ends with a table-driven suite asserting the one
+invariant `_onClick` has: **for any (current URL, anchor href) pair, the legacy
+path and `_onNavigate` reach the same decision** — routed in place, or handed to
+the browser.
+
+It exists because the per-case tests above it were not enough. Each pinned the
+symptom a specific review had named, and each was satisfiable without the
+invariant holding: the guard was widened until a bare `#` link worked (which
+broke self-links into full page reloads), then narrowed until self-links worked
+(which left the fallback a silent no-op where the Navigation API path
+re-routes). Both regressions shipped. The parity table catches both — and the
+second one is caught by *nothing else in the suite*.
+
+Add a row here before touching `_onClick`.
 
 Every guard added by this fork is mutation-checked — each one deleted
 individually fails at least one test:

@@ -287,14 +287,22 @@ export class Routes implements ReactiveController {
    * Invalidate any in-flight `goto()` on this controller without starting a
    * new one. Same-class access, so `_gotoSeq` stays private to `Routes`.
    */
-  private _supersede(): void {
+  private _supersede(seen: Set<Routes> = new Set()): void {
+    // `_childRoutes` can genuinely contain a cycle: a host carrying two Routes
+    // controllers that is disconnected and reconnected ends up with each
+    // registered as the other's child. Harmless while this was one increment;
+    // once it recurses, unguarded it is a stack overflow.
+    if (seen.has(this)) {
+      return;
+    }
+    seen.add(this);
     this._gotoSeq++;
     // Recursive: on the navigating branch the child's own propagation loop
     // reaches the grandchildren, but a skipped child never runs one — so
     // without this an in-flight grandchild `enter()` stays current and commits
     // over a URL that has moved on, the same defect one level deeper.
     for (const child of this._childRoutes) {
-      child._supersede();
+      child._supersede(seen);
     }
   }
 
