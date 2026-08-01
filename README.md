@@ -52,12 +52,32 @@ this._router.interceptOptions = {scroll: 'manual', focusReset: 'manual'};
 await routes.goto('/item/1', {signal});
 ```
 
-## Browser support
+## Browser support — please read
 
-The Navigation API is Baseline **Newly** Available (January 2026: Chrome/Edge,
-Safari 26.2, Firefox 147). Older engines fall back automatically to the legacy
-click + `popstate` path — `supportsNavigationApi()` is exported if you want to
-branch on it yourself.
+This router **requires the Navigation API**. There is no legacy fallback.
+
+The API is Baseline **Newly** Available (January 2026: Chrome/Edge, Safari 26.2,
+Firefox 147). Baseline **Widely** Available is not until roughly mid-2028, so
+older engines are still in the wild.
+
+On an engine without it, `Router` renders the current route on load but does not
+intercept navigation — every link becomes an ordinary full page load. If your
+server serves the app shell on every route that is slower, not broken. If it
+does not, those links 404.
+
+`supportsNavigationApi()` is exported so you can detect this at boot:
+
+```ts
+import {supportsNavigationApi} from '@vanlandinghamlabs/lit-router/router.js';
+
+if (!supportsNavigationApi()) {
+  showUpgradePrompt();
+}
+```
+
+If you need real pre-2026 support, pair this with a Navigation API polyfill
+rather than a second router: one decision path, with compatibility isolated in
+a layer whose whole job is spec accuracy.
 
 ## Develop
 

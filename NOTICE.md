@@ -61,10 +61,15 @@ it is now answered:
 - Skips what isn't ours: `!canIntercept`, `hashChange`, `downloadRequest`,
   form submissions, and cross-origin destinations.
 - New `interceptOptions` field forwards `focusReset` / `scroll` to `intercept()`.
-- **The legacy click/popstate path is retained as a feature-detected fallback.**
-  The Navigation API reached Baseline *Newly* Available in January 2026
-  (Chrome/Edge, Safari 26.2, Firefox 147); Baseline *Widely* Available is not
-  until roughly mid-2028, so older engines still need the old path.
+- **The legacy click/popstate path is deleted.** Ten review rounds found
+  divergences between it and `_onNavigate`, and every one was in the click
+  handler — structural, not luck: `_onNavigate` reads a decision the browser
+  already made, while the click handler re-derived it, re-implementing the
+  rules for choosing a navigable, the fragment-navigation predicate and the
+  modifier-key rules. Each round found another place the re-implementation and
+  the spec disagreed. On an engine without the API links become ordinary full
+  page loads (slower, not broken, for a server that serves the shell on every
+  route); `supportsNavigationApi()` is exported so an app can detect it.
 
 ### `src/routes.ts` — behavioural changes
 
@@ -95,27 +100,8 @@ it is now answered:
   gated the parent's outlet swap on an `enter()` for a tail that child would
   never render, and let its `No route found` throw strand the parent entirely.
   Nested supersession is the counter's job, not the await's.
-- The fallback click path gained the same `hasRouteFor` gate (it calls
-  `preventDefault()` first, so swallowing an unrenderable link there also stops
-  the browser doing the real navigation) and a fragment-only-link guard. A
-  fragment move is a same-document navigation, so it fires `popstate` too —
-  `_onPopState` therefore no-ops when only the fragment changed, which is the
-  other half of matching `_onNavigate`'s `hashChange` behaviour.
 - New `hasRouteFor(pathname)`, used by `Router` to decline what it cannot
   render.
-
-### What the fallback promises
-
-The legacy click/popstate path is **best-effort compatibility for pre-2026
-engines, not a decision-identical twin of `_onNavigate`.** Nine review rounds on
-this fork found real divergences in it and every one was in `_onClick`; the
-Navigation API path has been stable throughout. The parity table is what keeps
-the two aligned on the inputs it can vary, and the known gaps are listed below
-rather than pretended away.
-
-If your browser support baseline is Safari 26.2 / Firefox 147 or newer, deleting
-the fallback outright removes this entire class of defect and about a third of
-`router.ts`.
 
 ### Known limits
 
@@ -128,15 +114,9 @@ the fallback outright removes this entire class of defect and about a third of
   "decline what we cannot render" fix does not reach that configuration.
 - `goto()` still ignores the query string (upstream limitation), so a GET form
   whose action matches a route is intercepted and loses its query.
-- **Fallback path only**, all verified divergences from `_onNavigate` that are
-  not fixed: a link inside a **closed** shadow root (`composedPath()` is
-  retargeted, so the anchor is invisible to a `window` listener) and an SVG
-  `<a>` (lowercase `tagName`, `href.baseVal`). `<area>` *is* handled.
 - The `seen` set in `_supersede()` is defence in depth and unpinned **by
   construction**: since `hostDisconnected` removes its listener, no test can
   build a `_childRoutes` cycle any more.
-- An app setting `interceptOptions = {scroll: 'manual'}` gets no scroll on the
-  Navigation API path but still gets the browser's on the fallback.
 - A child skipped because it cannot render the new tail keeps its previously
   *committed* outlet — it is superseded (no in-flight navigation can commit)
   but not cleared, so it goes on rendering the route the URL has left. Upstream
@@ -157,85 +137,19 @@ Runner so it stands alone. Test changes:
 - Two `(r: RouteConfig)` annotations added in `router_test.ts` (upstream relied
   on monorepo-wide inference). **Otherwise upstream's 6 tests are unmodified and
   pass**, which is the main evidence that the rewrite preserves behaviour.
-- 46 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
+- 14 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
   The first asserts the suite is actually running against `window.navigation`
   rather than silently falling back — without it the rest would pass against the
-  legacy path and prove nothing. Two more delete `window.navigation` from the
-  frame realm before mounting, which is the only way to genuinely exercise the
-  retained fallback — Chromium always has the API, so before this both legacy
-  handlers could be booby-trapped without failing a single test.
+  legacy path and prove nothing. It is kept as a guard for the day this
+  package's requirement changes.
 
 ## Verified
 
-`npm test` → 52 passed (6 upstream + 46 new), Chromium via Playwright.
+`npm test` → 20 passed (6 upstream + 14 new), Chromium via Playwright.
 
 Run `npm run clean` before a mutation check: the build is `composite`/
 `incremental`, and a stale `development/` can contain a hunk's comment without
 its code, greening the suite against output that lacks the change.
-
-### Click-decision parity
-
-`src/test/navigation_test.ts` ends with a table-driven suite asserting the one
-invariant `_onClick` has: **for any (current URL, anchor href) pair, the legacy
-path and `_onNavigate` reach the same decision** — routed in place, or handed to
-the browser.
-
-It exists because the per-case tests above it were not enough. Each pinned the
-symptom a specific review had named, and each was satisfiable without the
-invariant holding: the guard was widened until a bare `#` link worked (which
-broke self-links into full page reloads), then narrowed until self-links worked
-(which left the fallback a silent no-op where the Navigation API path
-re-routes). Both regressions shipped. The parity table catches both — and the
-second one is caught by *nothing else in the suite*.
-
-Add a row here before touching `_onClick`. Two things make the table actually
-bite, both learned the hard way:
-
-- **Vary pathname and search, not just the fragment.** With every row starting
-  at `/a` and targeting `/a`, those conjuncts go unpinned and a widened guard
-  passes — how one shipped regression got through.
-- **Vary the anchor's attributes.** `_onClick` branches on `target`, `download`
-  and `rel`, so a table keyed on `(start, href)` covers a *projection* of the
-  handler's input domain, not the domain. `target="_self"` diverged through
-  every earlier round because of exactly this.
-
-Every conjunct of the fragment guard is individually mutation-pinned by a row.
-
-**The table cannot reach every input.** `decide()` runs each case inside an
-iframe, so the *framing context* is pinned — and framed, `_top`/`_parent`
-genuinely do target elsewhere, which is what made an earlier `_self`-only check
-look correct for two rounds. Anything `_onClick` reads that the table cannot
-vary needs a direct test instead; `targetsThisNavigable()` is exported and unit
--tested for exactly that reason. The full list of what `_onClick` reads:
-`button`, `metaKey`, `ctrlKey`, `shiftKey`, `altKey`, `defaultPrevented`,
-`composedPath()` (element kind **and** shadow mode), `target` × framing,
-`download`, `rel`, `href`, `origin`, `pathname`, `search`, `hash` — plus
-trusted-vs-synthetic events, which the harness cannot produce.
-
-Every guard added by this fork is mutation-checked — each one deleted
-individually fails at least one test (except `_supersede()`'s `seen` set, see
-Known limits):
-
-| Guard | Test that fails |
-|---|---|
-| per-controller goto counter | a superseded navigation does not win a NESTED outlet |
-| `signal.aborted` check | an aborted signal stands a goto down even with no newer goto |
-| `navigationType === 'reload'` filter | a reload is left alone |
-| `rel="external"` filter | rel="external" opts out on the Navigation API path too |
-| `hasRouteFor()` gate (Navigation API path) | a path with no route is left to the browser |
-| `hasRouteFor()` gate (fallback click path) | the fallback path also declines a path it cannot render |
-| fragment-link guard (fallback click path) | the fallback path leaves fragment-only links to the browser |
-| `_supersede()` on a skipped child | a child that cannot render the new tail is still superseded |
-| `hasRouteFor` filter (late-mount path) | a deep link under a wildcard the child cannot render does not throw |
-| popstate fragment no-op | a bare "#" link is left to the browser as well |
-| `goto()` bookkeeping sync | Back after a programmatic pushState still routes |
-| self-link hash condition | a self-link does not reload the document |
-| recursive `_supersede()` | supersession reaches a grandchild under a skipped child |
-| `hostDisconnected` listener removal | a reconnect does not make sibling controllers each other's child |
-| `target="_self"` acceptance | click decision parity: target="_self" |
-| conditional `preventDefault()` | re-clicking the fragment you are on still scrolls |
-| pushState gate in `_onClick` | a self-link does not add a history entry |
-| identical-URL clause in the fragment guard | click decision parity: the fragment link you are already on |
 
 ## Merging upstream later
 
