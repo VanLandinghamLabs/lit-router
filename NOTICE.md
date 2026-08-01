@@ -7,7 +7,7 @@ it lives inside the `lit/lit` monorepo at `packages/labs/router`.
 |---|---|
 | Upstream | https://github.com/lit/lit/tree/main/packages/labs/router |
 | Upstream version | `@lit-labs/router@0.1.4` (latest published at fork time) |
-| Upstream commit | `c42ee1e96b8fd61f7256f61d715daef572e76e52` (also in `.upstream-commit`) |
+| Upstream commit | `c42ee1e96b8fd61f7256f61d715daef572e76e52` |
 | Forked | 2026-07-31 |
 | Licence | BSD-3-Clause — unchanged, see `LICENSE` |
 
@@ -17,12 +17,15 @@ conditions and the disclaimer — it does *not* require a modification notice
 (that is Apache-2.0 §4(b)). Modified files carry one anyway, as a courtesy to
 anyone diffing against upstream.
 
-This fork is **private and unpublished**. It is deliberately *not* named
-`@lit-labs/router` — the npm scope belongs to the Lit team, and a fork
-masquerading as upstream would be worse than useless when debugging.
+Published as `lit-navigation-router`. Deliberately *not* named
+`@lit-labs/router` — that name belongs to the Lit team, and a fork
+masquerading as upstream would be worse than useless when debugging. This
+package is not affiliated with or endorsed by Google or the Lit team; the
+reference to Lit describes what it is for.
 
-`UPSTREAM-README.md` and `UPSTREAM-CHANGELOG.md` are upstream's, kept verbatim
-for reference.
+In the source repository (not the published tarball), `UPSTREAM-README.md` and
+`UPSTREAM-CHANGELOG.md` are upstream's, kept verbatim for reference, and
+`.upstream-commit` records the fork point.
 
 ## Why fork
 
@@ -153,7 +156,8 @@ its code, greening the suite against output that lacks the change.
 
 ## Merging upstream later
 
-`.upstream-commit` records the fork point. To pull upstream changes:
+`.upstream-commit` in the repository records the fork point. To pull upstream
+changes:
 
 ```sh
 git clone --depth 1 --filter=blob:none --sparse https://github.com/lit/lit.git

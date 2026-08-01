@@ -1,9 +1,14 @@
-# @vanlandinghamlabs/lit-router
+# lit-navigation-router
 
 A router for Lit, built on the [Navigation API](https://developer.mozilla.org/en-US/docs/Web/API/Navigation_API).
 
-Private fork of `@lit-labs/router` — see [NOTICE.md](./NOTICE.md) for provenance,
-licence and the full list of changes.
+Fork of [`@lit-labs/router`](https://github.com/lit/lit/tree/main/packages/labs/router)
+— see [NOTICE.md](./NOTICE.md) for provenance, licence and the full list of
+changes. Not affiliated with or endorsed by Google or the Lit team.
+
+```sh
+npm i lit-navigation-router
+```
 
 ## Why
 
@@ -21,7 +26,7 @@ the navigation un-finished while the handler runs, and aborts
 Identical to upstream:
 
 ```ts
-import {Router} from '@vanlandinghamlabs/lit-router/router.js';
+import {Router} from 'lit-navigation-router/router.js';
 
 class MyApp extends LitElement {
   private _router = new Router(this, [
@@ -65,10 +70,17 @@ intercept navigation — every link becomes an ordinary full page load. If your
 server serves the app shell on every route that is slower, not broken. If it
 does not, those links 404.
 
+**One case is genuinely broken, not just slow.** If you navigate
+programmatically with `history.pushState()` + `router.goto()`, nothing listens
+for the resulting `popstate` — so Back moves the URL while the outlet stays put,
+which is the URL/outlet split this fork exists to eliminate. Apps using that
+pattern should gate on `supportsNavigationApi()` rather than accept the
+degradation.
+
 `supportsNavigationApi()` is exported so you can detect this at boot:
 
 ```ts
-import {supportsNavigationApi} from '@vanlandinghamlabs/lit-router/router.js';
+import {supportsNavigationApi} from 'lit-navigation-router/router.js';
 
 if (!supportsNavigationApi()) {
   showUpgradePrompt();
@@ -78,6 +90,25 @@ if (!supportsNavigationApi()) {
 If you need real pre-2026 support, pair this with a Navigation API polyfill
 rather than a second router: one decision path, with compatibility isolated in
 a layer whose whole job is spec accuracy.
+
+## `URLPattern`
+
+Route patterns are compiled with `URLPattern`, which this package uses from the
+global scope and does **not** polyfill — same as upstream. Every engine that has
+the Navigation API also has `URLPattern`, so if the support check above passes
+you need nothing. If you support older engines anyway, load
+[`urlpattern-polyfill`](https://www.npmjs.com/package/urlpattern-polyfill)
+before the router:
+
+```ts
+import {URLPattern} from 'urlpattern-polyfill';
+if (!globalThis.URLPattern) {
+  (globalThis as {URLPattern?: unknown}).URLPattern = URLPattern;
+}
+```
+
+The published types do not depend on it — `URLPatternRouteConfig.pattern` is
+typed structurally, so a consumer build never needs the polyfill's types.
 
 ## Develop
 

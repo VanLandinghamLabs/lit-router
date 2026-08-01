@@ -189,11 +189,11 @@ const until = async (
   });
 
   test('a superseded navigation does not win a NESTED outlet', async () => {
-    // The parent's goto() must await its children, or Router's intercept
-    // handler resolves while a nested enter() is still pending. The navigation
-    // then *finishes*, its signal is never aborted (a finished navigation has
-    // nothing left to cancel), and the superseded child commits anyway —
-    // reintroducing the whole bug one level down, on exactly the nested routes
+    // Nested supersession has to be covered by the per-controller goto
+    // counter, because children are deliberately NOT awaited (see routes.ts —
+    // awaiting the outgoing branch was tried and reverted). Without the
+    // counter a superseded child commits whenever its enter() resolves,
+    // reintroducing the whole bug one level down on exactly the nested routes
     // real apps use.
     const {el, win, mod} = await mountParent();
     mod.NavChild.slowPaths.add('a');
@@ -253,9 +253,10 @@ const until = async (
     void doc;
   });
 
-  test('rel="external" opts out on the Navigation API path too', async () => {
-    // The retained legacy click path honours rel="external"; both paths this
-    // package ships must agree.
+  test('rel="external" opts out', async () => {
+    // `rel="external"` is a convention this router honours; neither HTML nor
+    // the Navigation API defines it, so the browser will not decline these for
+    // us and the filter is the only thing that does.
     const {el, win, doc} = await mount();
     const a = doc.createElement('a');
     a.href = '/a';

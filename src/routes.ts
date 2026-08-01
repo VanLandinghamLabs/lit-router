@@ -35,7 +35,24 @@ export interface PathRouteConfig extends BaseRouteConfig {
  * `search`.
  */
 export interface URLPatternRouteConfig extends BaseRouteConfig {
-  pattern: URLPattern;
+  pattern: URLPatternLike;
+}
+
+/**
+ * The part of `URLPattern` this router uses.
+ *
+ * Declared structurally rather than referencing the global so the emitted
+ * `.d.ts` is self-contained: the `/// <reference types="urlpattern-polyfill" />`
+ * above is not carried into declaration output, and `URLPattern` is not in
+ * TypeScript's bundled `lib.dom`, so a published package typed against the
+ * global fails a consumer build with `TS2304: Cannot find name 'URLPattern'`.
+ * A real `URLPattern` satisfies this, so passing one still type-checks.
+ */
+export interface URLPatternLike {
+  test(input: {pathname: string}): boolean;
+  exec(input: {pathname: string}): {
+    pathname: {groups: {[key: string]: string | undefined}};
+  } | null;
 }
 
 /**
@@ -48,12 +65,12 @@ export type RouteConfig = PathRouteConfig | URLPatternRouteConfig;
 // Rather than converting all given RoutConfigs to URLPatternRouteConfig, this
 // lets us make `routes` mutable so users can add new PathRouteConfigs
 // dynamically.
-const patternCache = new WeakMap<PathRouteConfig, URLPattern>();
+const patternCache = new WeakMap<PathRouteConfig, URLPatternLike>();
 
 const isPatternConfig = (route: RouteConfig): route is URLPatternRouteConfig =>
   (route as URLPatternRouteConfig).pattern !== undefined;
 
-const getPattern = (route: RouteConfig) => {
+const getPattern = (route: RouteConfig): URLPatternLike => {
   if (isPatternConfig(route)) {
     return route.pattern;
   }
@@ -288,10 +305,12 @@ export class Routes implements ReactiveController {
    * new one. Same-class access, so `_gotoSeq` stays private to `Routes`.
    */
   private _supersede(seen: Set<Routes> = new Set()): void {
-    // `_childRoutes` can genuinely contain a cycle: a host carrying two Routes
-    // controllers that is disconnected and reconnected ends up with each
-    // registered as the other's child. Harmless while this was one increment;
-    // once it recurses, unguarded it is a stack overflow.
+    // Unreachable defence in depth. Upstream *can* produce a `_childRoutes`
+    // cycle — a host carrying two Routes controllers, disconnected and
+    // reconnected, ends up with each registered as the other's child — but
+    // `hostDisconnected` below removes the listener that causes it, and a test
+    // asserts the cycle cannot form. Kept because an unguarded recursive walk
+    // over a cycle is a stack overflow rather than a misrender.
     if (seen.has(this)) {
       return;
     }

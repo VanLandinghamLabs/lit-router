@@ -1,9 +1,8 @@
 {
-  "name": "@vanlandinghamlabs/lit-router",
+  "name": "lit-navigation-router",
   "version": "0.2.0",
-  "description": "A router for Lit, built on the Navigation API. Fork of @lit-labs/router.",
+  "description": "A router for Lit built on the Navigation API. Fork of @lit-labs/router.",
   "license": "BSD-3-Clause",
-  "private": true,
   "repository": {
     "type": "git",
     "url": "git+https://github.com/VanLandinghamLabs/lit-router.git"
@@ -24,12 +23,15 @@
     "./routes.js": {
       "types": "./development/routes.d.ts",
       "default": "./development/routes.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "/development/",
     "!/development/test/",
-    "/src/"
+    "/src/",
+    "!/src/test/",
+    "/NOTICE.md"
   ],
   "scripts": {
     "prepare": "npm run build",
@@ -38,9 +40,10 @@
     "check-types": "tsc --noEmit -p tsconfig.json",
     "test": "npm run build && web-test-runner --config web-test-runner.config.js",
     "test:watch": "npm run build && web-test-runner --config web-test-runner.config.js --watch",
-    "build:assets": "mkdir -p development/test && cp src/test/*.html development/test/"
+    "build:assets": "mkdir -p development/test && cp src/test/*.html development/test/",
+    "prepublishOnly": "npm run clean && npm test"
   },
-  "author": "Google LLC (original), VanLandingham Labs (fork)",
+  "author": "VanLandingham Labs",
   "dependencies": {
     "lit": "^3.0.0"
   },
@@ -52,5 +55,18 @@
     "@web/test-runner-playwright": "^0.11.1",
     "typescript": "^5.7.0",
     "urlpattern-polyfill": "^10.1.0"
-  }
+  },
+  "keywords": [
+    "lit",
+    "router",
+    "navigation-api",
+    "spa",
+    "web-components",
+    "lit-element"
+  ],
+  "bugs": {
+    "url": "https://github.com/VanLandinghamLabs/lit-router/issues"
+  },
+  "homepage": "https://github.com/VanLandinghamLabs/lit-router#readme",
+  "sideEffects": false
 }

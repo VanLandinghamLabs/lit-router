@@ -116,15 +116,26 @@ export class Router extends Routes {
 
   override hostConnected() {
     super.hostConnected();
-    const navigation = getNavigation();
-    if (navigation !== undefined) {
-      navigation.addEventListener('navigate', this._onNavigate);
+    // Gated on the exported predicate, not on `navigation !== undefined`:
+    // a stub or partial polyfill under that name would otherwise make this
+    // branch throw out of connectedCallback while `supportsNavigationApi()`
+    // told the app it was unsupported — and then even the initial render below
+    // would not run.
+    if (supportsNavigationApi()) {
+      getNavigation()!.addEventListener('navigate', this._onNavigate);
       this._listening = true;
     }
     // Kick off routed rendering by going to the current URL. Done even without
     // the API: a full page load still renders the right route, which is what
     // makes the unsupported-engine degradation "slow" rather than "blank".
-    this.goto(window.location.pathname);
+    // Surfaced rather than left as a bare unhandled rejection, matching the
+    // convention in routes.ts: on an engine without the API this is the *only*
+    // rendering path, and a deep link with no matching route throws here.
+    void this.goto(window.location.pathname).catch((err) => {
+      queueMicrotask(() => {
+        throw err;
+      });
+    });
   }
 
   override hostDisconnected() {
@@ -158,9 +169,10 @@ export class Router extends Routes {
       return;
     }
 
-    // `rel="external"` is the conventional "don't route this" opt-out.
-    // Best-effort: `sourceElement` is not in every engine, and is absent for
-    // programmatic navigation.
+    // `rel="external"` is a convention this router honours — it is not defined
+    // by HTML or by the Navigation API, so the browser will not decline these
+    // for us. Best-effort: `sourceElement` is not in every engine, and is
+    // absent for programmatic navigation.
     if (e.sourceElement?.getAttribute?.('rel') === 'external') {
       return;
     }

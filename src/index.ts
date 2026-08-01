@@ -4,4 +4,5 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 export * from './routes.js';
-export {Router} from './router.js';
+export {Router, supportsNavigationApi} from './router.js';
+export type {InterceptOptions} from './router.js';
