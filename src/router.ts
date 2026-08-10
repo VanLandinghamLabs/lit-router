@@ -150,11 +150,15 @@ export class Router extends Routes {
   private _onNavigate = (e: NavigateEventLike) => {
     // Not ours to handle: anything the browser says cannot be intercepted,
     // fragment-only moves, downloads, and POST form submissions.
+    //
+    // `!= null`, not `!== null`: the spec types both as nullable-but-present,
+    // but a polyfill that leaves either unset would make a strict check true
+    // for every ordinary link and silently decline the whole app.
     if (
       !e.canIntercept ||
       e.hashChange ||
-      e.downloadRequest !== null ||
-      e.formData !== null
+      e.downloadRequest != null ||
+      e.formData != null
     ) {
       return;
     }
