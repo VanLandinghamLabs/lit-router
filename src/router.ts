@@ -9,9 +9,6 @@
 
 import {Routes} from './routes.js';
 
-// We cache the origin since it can't change
-const origin = location.origin || location.protocol + '//' + location.host;
-
 /**
  * The slice of `NavigateEvent` this router reads. Declared locally rather than
  * typing the handler `any`: these properties *are* the correctness boundary, so
@@ -153,10 +150,12 @@ export class Router extends Routes {
   private _onNavigate = (e: NavigateEventLike) => {
     // Not ours to handle: anything the browser says cannot be intercepted,
     // fragment-only moves, downloads, and POST form submissions.
-    if (!e.canIntercept || e.hashChange || e.downloadRequest !== null) {
-      return;
-    }
-    if (e.formData) {
+    if (
+      !e.canIntercept ||
+      e.hashChange ||
+      e.downloadRequest !== null ||
+      e.formData !== null
+    ) {
       return;
     }
 
@@ -177,8 +176,12 @@ export class Router extends Routes {
       return;
     }
 
+    // Read per navigation rather than cached at module scope: the value cannot
+    // change, but reading it on import makes merely importing this module throw
+    // where there is no `location` (SSR, a bundler evaluating for tree-shaking
+    // under the package's `sideEffects: false` claim).
     const url = new URL(e.destination.url);
-    if (url.origin !== origin) {
+    if (url.origin !== window.location.origin) {
       return;
     }
 
