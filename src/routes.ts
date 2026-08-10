@@ -452,13 +452,29 @@ export class Routes implements ReactiveController {
  * wildcard at the end of a pathname pattern, like `/foo/*`
  */
 const getTailGroup = (groups: {[key: string]: string | undefined}) => {
-  let tailKey: string | undefined;
+  let tailIndex = -1;
   for (const key of Object.keys(groups)) {
-    if (/\d+/.test(key) && (tailKey === undefined || key > tailKey)) {
-      tailKey = key;
+    // Anchored. `URLPattern` keys a positional group by its index, so a
+    // non-digit key is never one — an unanchored test also accepts a *named*
+    // group containing a digit (`:id2`), and since a letter sorts above a
+    // digit it then won the comparison below and the param value was handed
+    // to the child instead of the tail.
+    //
+    // Necessary, not sufficient: an unnamed *regex* group is positional too
+    // (`/post/(\d+)` yields key "0"), as is a wildcard that is not last
+    // (`/foo/*/bar`). Both are mis-read as tails here, and both predate this
+    // check — selecting the tail properly needs the pattern, not just groups.
+    if (!/^\d+$/.test(key)) {
+      continue;
+    }
+    // Numeric, not lexicographic: '9' sorts above '10' as a string, so a
+    // pattern with eleven or more wildcards picked group 9 as its tail.
+    const index = Number(key);
+    if (index > tailIndex) {
+      tailIndex = index;
     }
   }
-  return tailKey && groups[tailKey];
+  return tailIndex < 0 ? undefined : groups[String(tailIndex)];
 };
 
 /**
