@@ -1,0 +1,33 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The suite drives a real Chromium via @web/test-runner-playwright and
+      # asserts `window.navigation` is present, so the browser is not optional
+      # and a headless-shell substitute will not do.
+      - run: npx playwright install --with-deps chromium
+
+      - run: npm run check-types
+
+      # Runs the build first, then web-test-runner against development/test.
+      - run: npm test
