@@ -189,8 +189,74 @@ export class DeepParent extends LitElement {
   }
 }
 
+/**
+ * Child of `tail-parent`, below. Renders only if it is handed the wildcard's
+ * tail (`docs/…`) rather than the `:id2` param that precedes it.
+ */
+@customElement('tail-child')
+export class TailChild extends LitElement {
+  _routes = new Routes(this, [
+    {path: 'docs/:doc', render: ({doc}) => html`<span>DOC-${doc}</span>`},
+  ]);
+
+  override render() {
+    return html`${this._routes.outlet()}`;
+  }
+}
+
+/**
+ * A wildcard preceded by a named param whose name contains a digit. The tail
+ * is group `0`; `id2` is not a positional group at all.
+ */
+@customElement('tail-parent')
+export class TailParent extends LitElement {
+  _router = new Router(this, [
+    {path: '/', render: () => html`<h2>Root</h2>`},
+    {path: '/user/:id2/*', render: () => html`<tail-child></tail-child>`},
+  ]);
+
+  override render() {
+    return html`${this._router.outlet()}`;
+  }
+}
+
+/** Child of `many-parent`, below. Renders only if handed group 10, not 9. */
+@customElement('many-child')
+export class ManyChild extends LitElement {
+  _routes = new Routes(this, [
+    {path: 'TAIL', render: () => html`<span>MANY-TAIL</span>`},
+  ]);
+
+  override render() {
+    return html`${this._routes.outlet()}`;
+  }
+}
+
+/**
+ * Eleven wildcards, so the tail is group `10` — the point where a
+ * lexicographic key comparison diverges from a numeric one ('9' > '10').
+ */
+@customElement('many-parent')
+export class ManyParent extends LitElement {
+  _router = new Router(this, [
+    {path: '/', render: () => html`<h2>Root</h2>`},
+    {
+      path: '/m' + '/*'.repeat(11),
+      render: () => html`<many-child></many-child>`,
+    },
+  ]);
+
+  override render() {
+    return html`${this._router.outlet()}`;
+  }
+}
+
 declare global {
   interface HTMLElementTagNameMap {
+    'tail-child': TailChild;
+    'tail-parent': TailParent;
+    'many-child': ManyChild;
+    'many-parent': ManyParent;
     'deep-grand': DeepGrand;
     'deep-child': DeepChild;
     'deep-parent': DeepParent;
@@ -214,4 +280,8 @@ declare global {
   DeepGrand,
   DeepChild,
   DeepParent,
+  TailChild,
+  TailParent,
+  ManyChild,
+  ManyParent,
 };

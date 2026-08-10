@@ -77,6 +77,13 @@ const until = async (
   const mountStrict = () => mountTag<HTMLElement>('nav-strict');
   const mountDeep = () =>
     mountTag<HTMLElement & {updateComplete: Promise<unknown>}>('deep-parent');
+  const mountTail = () =>
+    mountTag<HTMLElement & {updateComplete: Promise<unknown>}>('tail-parent');
+  const mountMany = () =>
+    mountTag<HTMLElement & {updateComplete: Promise<unknown>}>('many-parent');
+
+  const childText = (host: HTMLElement, tag: string) =>
+    host.shadowRoot?.querySelector(tag)?.shadowRoot?.textContent ?? '';
 
   test('the suite is exercising the Navigation API, not the fallback', async () => {
     const {el, win} = await mount();
@@ -383,6 +390,44 @@ const until = async (
       'GRAND-S',
       'an abandoned grandchild route must not commit after the URL moved on'
     );
+  });
+
+  test('a named param containing a digit is not mistaken for the tail', async () => {
+    // getTailGroup selects the wildcard's positional group. An unanchored
+    // /\d+/ also accepts a *named* group whose name contains a digit, and
+    // since a letter sorts above a digit lexicographically, `id2` then beat
+    // the real tail group `0` — so the child was handed the param value ('5')
+    // instead of the tail ('docs/a') and rendered nothing.
+    const {el, win} = await mountTail();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (win as any).navigation.navigate('/user/5/docs/a', {
+      history: 'push',
+    }).finished;
+    // The child mounts as a result of the parent's render, so its own goto()
+    // runs after this navigation has finished — poll rather than sleep.
+    await until('child received the wildcard tail', () =>
+      childText(el, 'tail-child').includes('DOC-a')
+    );
+
+    assert.equal(win.location.pathname, '/user/5/docs/a');
+  });
+
+  test('the tail group is chosen numerically, not lexicographically', async () => {
+    // With eleven wildcards the tail is group 10, but '9' > '10' as a string,
+    // so a lexicographic max picked group 9 and handed the child the
+    // second-to-last segment.
+    const {el, win} = await mountMany();
+    const pathname = '/m/s0/s1/s2/s3/s4/s5/s6/s7/s8/s9/TAIL';
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (win as any).navigation.navigate(pathname, {history: 'push'})
+      .finished;
+    await until('child received group 10, not group 9', () =>
+      childText(el, 'many-child').includes('MANY-TAIL')
+    );
+
+    assert.equal(win.location.pathname, pathname);
   });
 
   test('a reconnect does not make sibling controllers each other\'s child', async () => {
