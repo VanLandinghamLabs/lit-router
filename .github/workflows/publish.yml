@@ -1,0 +1,54 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Required for npm Trusted Publishing: the job mints a short-lived OIDC token
+  # instead of reading a stored NPM_TOKEN.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      # Node 22 ships npm 10.x; Trusted Publishing needs >= 11.5.1.
+      - run: npm install -g npm@latest
+
+      - run: npm ci
+
+      - run: npx playwright install --with-deps chromium
+
+      - run: npm run check-types
+
+      # `prepublishOnly` reruns clean + test, but that fires after the version
+      # check below — run the suite up front so a red build never gets as far
+      # as contacting the registry.
+      - run: npm test
+
+      # The release tag is the source of truth. If it disagrees with
+      # package.json, publishing would either fail confusingly or ship a
+      # version nobody tagged.
+      - name: Check tag matches package.json version
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          PKG="v$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::release tag $TAG does not match package.json $PKG"
+            exit 1
+          fi
+
+      - run: npm publish --provenance --access public

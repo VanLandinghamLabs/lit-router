@@ -1,6 +1,6 @@
 {
   "name": "lit-navigation-router",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A router for Lit built on the Navigation API. Fork of @lit-labs/router.",
   "license": "BSD-3-Clause",
   "repository": {
@@ -31,7 +31,8 @@
     "!/development/test/",
     "/src/",
     "!/src/test/",
-    "/NOTICE.md"
+    "/NOTICE.md",
+    "/CHANGELOG.md"
   ],
   "scripts": {
     "prepare": "npm run build",
