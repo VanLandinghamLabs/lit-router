@@ -57,6 +57,34 @@ this._router.interceptOptions = {scroll: 'manual', focusReset: 'manual'};
 await routes.goto('/item/1', {signal});
 ```
 
+## Nested routes and tails
+
+A route whose pattern ends in a wildcard — `/docs/*` — hands what the wildcard
+matched (the *tail*) to any `Routes` controller mounted by its `render()`. The
+tail has no leading slash, and child routes are written the same way:
+
+```ts
+// Parent
+{path: '/docs/*', render: () => html`<my-docs></my-docs>`}
+
+// Child, inside <my-docs>
+private _routes = new Routes(this, [
+  {path: '', render: () => html`<h2>Docs</h2>`}, // /docs/
+  {path: ':page', render: ({page}) => html`<doc-page .page=${page}></doc-page>`}, // /docs/intro
+]);
+```
+
+The index of a nested route space is the empty tail, spelled `{path: ''}`.
+`{path: '/'}` matches nothing there: it would need a tail of `/`, i.e. a URL of
+`/docs//`.
+
+Only a trailing wildcard produces a tail. An unnamed regex group
+(`/post/(\d+)`) or a wildcard followed by more pattern (`/a/*/b`) is a
+parameter of that route, available as `params[0]`; it is neither passed to
+children nor stripped from `link()`. A `fallback` behaves like a `/*` route and
+passes the whole pathname on as the tail. Nested, it accepts the slash-less
+tail it is handed and passes that on.
+
 ## Browser support — please read
 
 This router **requires the Navigation API**. There is no legacy fallback.

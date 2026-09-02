@@ -105,6 +105,20 @@ it is now answered:
   Nested supersession is the counter's job, not the await's.
 - New `hasRouteFor(pathname)`, used by `Router` to decline what it cannot
   render.
+- **The tail is identified from the pattern, not from the match.** Upstream
+  takes the highest positional group of any match as the tail, but `URLPattern`
+  keys an unnamed regex group (`/post/(\d+)`) and a non-final wildcard
+  (`/foo/*/bar`) by position too, so both were handed to children and stripped
+  from `link()`. `tailOf()` reads the compiled pattern's `pathname` and only
+  looks for a tail when it ends in a wildcard; `URLPatternLike.pathname` is
+  therefore required.
+- The fallback matches by hand rather than with a `/*` pattern. A nested
+  controller is handed its tail without a leading slash, which `/*` rejects, so
+  upstream's nested fallback saw empty params and never routed its own
+  children.
+- Children are handed to `_routeChild` on every parent navigation, tail or
+  not: a route with no tail still supersedes them, so a child mid-`enter()` for
+  the previous tail cannot commit over a URL that has moved on.
 
 ### Known limits
 
@@ -120,9 +134,10 @@ it is now answered:
 - The `seen` set in `_supersede()` is defence in depth and unpinned **by
   construction**: since `hostDisconnected` removes its listener, no test can
   build a `_childRoutes` cycle any more.
-- A child skipped because it cannot render the new tail keeps its previously
-  *committed* outlet — it is superseded (no in-flight navigation can commit)
-  but not cleared, so it goes on rendering the route the URL has left. Upstream
+- A child skipped because it cannot render the new tail — or because the
+  parent's new route has no tail at all — keeps its previously *committed*
+  outlet: it is superseded (no in-flight navigation can commit) but not
+  cleared, so it goes on rendering the route the URL has left. Upstream
   had the same end state by a different route (`No route found` threw before
   any state changed). Clearing it needs `_currentRoute` reset plus a host
   update, which is a behaviour change rather than a bug fix.
@@ -140,7 +155,8 @@ Runner so it stands alone. Test changes:
 - Two `(r: RouteConfig)` annotations added in `router_test.ts` (upstream relied
   on monorepo-wide inference). **Otherwise upstream's 6 tests are unmodified and
   pass**, which is the main evidence that the rewrite preserves behaviour.
-- 14 new tests in `src/test/navigation_test.ts` cover the Navigation API path.
+- 26 new tests in `src/test/navigation_test.ts` cover the Navigation API path
+  and the nested-routing fixes above.
   The first asserts the suite is actually running against `window.navigation`
   rather than silently falling back — without it the rest would pass against the
   legacy path and prove nothing. It is kept as a guard for the day this
@@ -148,7 +164,7 @@ Runner so it stands alone. Test changes:
 
 ## Verified
 
-`npm test` → 20 passed (6 upstream + 14 new), Chromium via Playwright.
+`npm test` → 32 passed (6 upstream + 26 new), Chromium via Playwright.
 
 Run `npm run clean` before a mutation check: the build is `composite`/
 `incremental`, and a stale `development/` can contain a hunk's comment without
