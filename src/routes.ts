@@ -49,6 +49,12 @@ export interface URLPatternRouteConfig extends BaseRouteConfig {
  * A real `URLPattern` satisfies this, so passing one still type-checks.
  */
 export interface URLPatternLike {
+  /**
+   * The pathname pattern string, as `URLPattern.prototype.pathname` returns
+   * it. Read to tell a trailing wildcard from any other positional group —
+   * the groups object alone cannot (see `tailOf`).
+   */
+  readonly pathname: string;
   test(input: {pathname: string}): boolean;
   exec(input: {pathname: string}): {
     pathname: {groups: {[key: string]: string | undefined}};
@@ -81,13 +87,46 @@ const getPattern = (route: RouteConfig): URLPatternLike => {
   return pattern;
 };
 
-// The implicit "/*" pattern every configured fallback matches against. Built on
-// first use rather than at module scope so that importing this module never
-// touches `URLPattern` — it may be polyfilled after import, or absent entirely.
-let wildcardPattern: URLPatternLike | undefined;
+/**
+ * Matches a pathname pattern that ends in a wildcard, in the forms
+ * `URLPattern.prototype.pathname` regenerates one: a bare `*` — which a
+ * trailing `(.*)` also normalises to — or `{*}`, which the generator emits for
+ * a wildcard after a modified group, e.g. `/docs{/}?*`. Either may be
+ * optional (`*?`). Not a wildcard: an escaped `\*`, or a `*` that is the
+ * modifier on a group (`(\d+)*`, `{/}*`) or on a named param (`:rest*`).
+ * Those exclusions matter when an earlier positional group exists —
+ * `/x/(\d+)/:rest*` — since that group would otherwise be taken for the tail.
+ */
+const TRAILING_WILDCARD = /(?:(?<![\\)}]|:[\w$]+)\*|\{\*\})\??$/;
 
-const getWildcardPattern = (): URLPatternLike =>
-  (wildcardPattern ??= new URLPattern({pathname: '/*'}));
+/**
+ * The tail of a match — what a trailing wildcard (`/foo/*`) captured — or
+ * undefined when the pattern has none.
+ *
+ * Decided from the pattern, not from the groups object: an unnamed regex group
+ * (`/post/(\d+)`) and a wildcard that is not last (`/foo/*` followed by
+ * `/bar`) are keyed by index exactly as a tail is, and reading either as one
+ * truncated `link()` and handed a child the wrong segment. When a trailing
+ * wildcard is present it is the last group in the pattern, so its key is the
+ * highest positional index.
+ */
+const tailOf = (
+  route: RouteConfig,
+  params: {[key: string]: string | undefined}
+): string | undefined => {
+  if (!TRAILING_WILDCARD.test(getPattern(route).pathname)) {
+    return undefined;
+  }
+  let tailIndex = -1;
+  for (const key of Object.keys(params)) {
+    // Numeric, not lexicographic: '9' sorts above '10' as a string, so a
+    // pattern with eleven or more wildcards picked group 9 as its tail.
+    if (/^\d+$/.test(key) && Number(key) > tailIndex) {
+      tailIndex = Number(key);
+    }
+  }
+  return tailIndex < 0 ? undefined : params[String(tailIndex)];
+};
 
 /**
  * A reactive controller that performs location-based routing using a
@@ -116,7 +155,10 @@ export class Routes implements ReactiveController {
 
   /**
    * A default fallback route which will always be matched if none of the
-   * {@link routes} match. Implicitly matches to the path "/*".
+   * {@link routes} match. Behaves like a `/*` route: `params[0]` is the whole
+   * pathname minus its leading slash, and is handed to child controllers as
+   * their tail. A nested controller's own pathname is a tail, with no leading
+   * slash; the fallback accepts that too.
    */
   fallback?: BaseRouteConfig;
 
@@ -139,6 +181,7 @@ export class Routes implements ReactiveController {
   private _gotoSeq = 0;
 
   private _currentPathname: string | undefined;
+  private _currentTail: string | undefined;
   private _currentRoute: RouteConfig | undefined;
   private _currentParams: {
     [key: string]: string | undefined;
@@ -207,23 +250,23 @@ export class Routes implements ReactiveController {
     // newer one. This also keeps `Routes` correct when used on its own, with
     // no `Router` and no Navigation API in the picture.
     const seq = ++this._gotoSeq;
-    let tailGroup: string | undefined;
+    let tail: string | undefined;
 
     if (this.routes.length === 0 && this.fallback === undefined) {
       // If a routes controller has none of its own routes it acts like it has
       // one route of `/*` so that it passes the whole pathname as a tail
       // match.
-      tailGroup = pathname;
+      tail = pathname;
       this._currentPathname = '';
       // Simulate a tail group with the whole pathname
-      this._currentParams = {0: tailGroup};
+      this._currentParams = {0: tail};
     } else {
       const match = this._match(pathname);
       if (match === undefined) {
         throw new Error(`No route found for ${pathname}`);
       }
       const {route, params} = match;
-      tailGroup = getTailGroup(params);
+      tail = match.tail;
       if (typeof route.enter === 'function') {
         const success = await route.enter(params);
         // If enter() returns false, cancel this navigation
@@ -240,10 +283,11 @@ export class Routes implements ReactiveController {
       this._currentRoute = route;
       this._currentParams = params;
       this._currentPathname =
-        tailGroup === undefined
+        tail === undefined
           ? pathname
-          : pathname.substring(0, pathname.length - tailGroup.length);
+          : pathname.substring(0, pathname.length - tail.length);
     }
+    this._currentTail = tail;
 
     // Propagate the tail match to children — deliberately NOT awaited.
     //
@@ -258,10 +302,13 @@ export class Routes implements ReactiveController {
     // committed, outlet stranded, i.e. this fork's own thesis bug one level
     // down. Nested supersession is handled by the goto counter above, not by
     // awaiting. `_routeChild` covers the per-child filtering and error policy.
-    if (tailGroup !== undefined) {
-      for (const childRoutes of this._childRoutes) {
-        this._routeChild(childRoutes, tailGroup);
-      }
+    //
+    // Runs whether or not there is a tail. A route without one has nothing for
+    // the children to render, but they must still be superseded — otherwise a
+    // child mid-`enter()` for the previous tail stays current and commits over
+    // a URL that has moved on.
+    for (const childRoutes of this._childRoutes) {
+      this._routeChild(childRoutes, tail);
     }
     this._host.requestUpdate();
   }
@@ -291,7 +338,9 @@ export class Routes implements ReactiveController {
    * a genuine `enter()` rejection still surfaces the way it does upstream.
    * Skipping must still supersede: `goto()` is where the counter is bumped, so
    * returning without it would leave an in-flight child navigation current,
-   * free to commit over a URL that has moved on.
+   * free to commit over a URL that has moved on. A parent route with no tail
+   * at all is the same case: nothing to route, but still something to stand
+   * down.
    *
    * No abort signal is threaded through, and the goto is deliberately not
    * awaited. The parent commits its own state before children run, so a child
@@ -300,8 +349,8 @@ export class Routes implements ReactiveController {
    * hash-only navigation aborts the outstanding one without producing a
    * replacement. Supersession is the counter's job.
    */
-  private _routeChild(child: Routes, tail: string) {
-    if (!child.hasRouteFor(tail)) {
+  private _routeChild(child: Routes, tail: string | undefined) {
+    if (tail === undefined || !child.hasRouteFor(tail)) {
       child._supersede();
       return;
     }
@@ -368,27 +417,30 @@ export class Routes implements ReactiveController {
    * route wants its params too.
    */
   private _match(pathname: string):
-    | {route: RouteConfig; params: {[key: string]: string | undefined}}
+    | {
+        route: RouteConfig;
+        params: {[key: string]: string | undefined};
+        tail: string | undefined;
+      }
     | undefined {
     for (const route of this.routes) {
       const result = getPattern(route).exec({pathname});
       if (result !== null) {
-        return {route, params: result.pathname.groups};
+        const params = result.pathname.groups;
+        return {route, params, tail: tailOf(route, params)};
       }
     }
     if (this.fallback === undefined) {
       return undefined;
     }
     // The fallback route behaves like it has a "/*" path. This is hidden from
-    // the public API but is added here to return a valid RouteConfig. The
-    // pattern is the shared one rather than one derived from this object:
-    // the spread produces a fresh object every call, which `patternCache` —
-    // keyed by identity — would miss, rebuilding a URLPattern per navigation.
-    const wildcard = getWildcardPattern();
-    return {
-      route: {...this.fallback, path: '/*'},
-      params: wildcard.exec({pathname})?.pathname.groups ?? {},
-    };
+    // the public API; the `path` is there to return a valid RouteConfig. The
+    // match itself is done by hand rather than with a real `/*` pattern: a
+    // nested controller is handed its tail *without* a leading slash, which
+    // `/*` does not match, so a nested fallback matched nothing — empty
+    // params, no tail, and its own children never routed.
+    const tail = pathname.startsWith('/') ? pathname.slice(1) : pathname;
+    return {route: {...this.fallback, path: '/*'}, params: {0: tail}, tail};
   }
 
   hostConnected() {
@@ -440,42 +492,11 @@ export class Routes implements ReactiveController {
 
     // A child that mounts under an existing tail match has to be caught up to
     // it — it missed the propagation loop in goto() that ran before it existed.
-    const tailGroup = getTailGroup(this._currentParams);
-    if (tailGroup !== undefined) {
-      this._routeChild(childRoutes, tailGroup);
-    }
+    // With no tail there is nothing to catch up to, and `_routeChild` then only
+    // supersedes, a no-op on a freshly mounted child.
+    this._routeChild(childRoutes, this._currentTail);
   };
 }
-
-/**
- * Returns the tail of a pathname groups object. This is the match from a
- * wildcard at the end of a pathname pattern, like `/foo/*`
- */
-const getTailGroup = (groups: {[key: string]: string | undefined}) => {
-  let tailIndex = -1;
-  for (const key of Object.keys(groups)) {
-    // Anchored. `URLPattern` keys a positional group by its index, so a
-    // non-digit key is never one — an unanchored test also accepts a *named*
-    // group containing a digit (`:id2`), and since a letter sorts above a
-    // digit it then won the comparison below and the param value was handed
-    // to the child instead of the tail.
-    //
-    // Necessary, not sufficient: an unnamed *regex* group is positional too
-    // (`/post/(\d+)` yields key "0"), as is a wildcard that is not last
-    // (`/foo/*/bar`). Both are mis-read as tails here, and both predate this
-    // check — selecting the tail properly needs the pattern, not just groups.
-    if (!/^\d+$/.test(key)) {
-      continue;
-    }
-    // Numeric, not lexicographic: '9' sorts above '10' as a string, so a
-    // pattern with eleven or more wildcards picked group 9 as its tail.
-    const index = Number(key);
-    if (index > tailIndex) {
-      tailIndex = index;
-    }
-  }
-  return tailIndex < 0 ? undefined : groups[String(tailIndex)];
-};
 
 /**
  * This event is fired from Routes controllers when their host is connected to

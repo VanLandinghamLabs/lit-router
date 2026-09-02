@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A route's tail is identified from its pattern, not guessed from the
+  match's groups object**
+  ([#4](https://github.com/VanLandinghamLabs/lit-router/issues/4)).
+  `URLPattern` keys every unnamed group by position, so an unnamed regex group
+  (`/post/(\d+)`) and a wildcard that is not last (`/foo/*/bar`) looked exactly
+  like a trailing `/*`. Both were handed to child controllers as a tail and
+  stripped from `link()`, which returned `/post/` for `/post/123` and a
+  truncated `/foo/zz/b` for `/foo/zz/bar`. Only a pattern that ends in a
+  wildcard now has a tail.
+- **A nested `fallback` passes its tail on to its own children**
+  ([#5](https://github.com/VanLandinghamLabs/lit-router/issues/5)). The
+  fallback matched with a literal `/*` pattern, but a nested controller is
+  handed its tail without a leading slash, which `/*` rejects: the fallback
+  rendered with empty params and grandchildren were never routed or
+  superseded. It now behaves like `/*` at the root and `*` when nested, with
+  `params[0]` the whole tail in both cases.
+- **Children are superseded when the parent moves to a route with no tail**
+  ([#7](https://github.com/VanLandinghamLabs/lit-router/issues/7)). The
+  propagation loop ran only when the new route had a tail, so a child
+  mid-`enter()` for the previous tail was never stood down and could commit
+  over a URL that had already moved on.
+
+### Changed
+
+- `URLPatternLike` requires `pathname`: the pattern string, which a real
+  `URLPattern` exposes and which is how the tail is now identified. An object
+  offering only `test()`/`exec()` no longer type-checks as a route pattern.
+- A trailing `*` counts as a tail only when it is a wildcard: bare `*`, `{*}`,
+  `(.*)` (which `URLPattern` normalises to `*`), optionally followed by `?`.
+  A `*` that is the modifier on a group or a named param (`(\d+)*`, `{/}*`,
+  `:rest*`), or an escaped `\*`, is not. Previously any pattern whose match
+  produced a positional group was treated as having a tail.
+
+### Documentation
+
+- A nested index route is spelled `{path: ''}`
+  ([#6](https://github.com/VanLandinghamLabs/lit-router/issues/6)). The tail
+  handed to a child has no leading slash, so the index of a nested route space
+  is the empty string; `{path: '/'}` matches nothing there. This already
+  worked and is now documented and pinned by a test.
+
 ## 0.3.0
 
 ### Fixed

@@ -5,7 +5,7 @@
  */
 
 import {assert} from '@open-wc/testing';
-import type {NavTest} from './navigation_test_code.js';
+import type {NavTest, ProbeParent} from './navigation_test_code.js';
 
 const canTest =
   window.ShadowRoot &&
@@ -81,6 +81,13 @@ const until = async (
     mountTag<HTMLElement & {updateComplete: Promise<unknown>}>('tail-parent');
   const mountMany = () =>
     mountTag<HTMLElement & {updateComplete: Promise<unknown>}>('many-parent');
+  const mountProbe = () => mountTag<ProbeParent>('probe-parent');
+  const mountFallback = () =>
+    mountTag<HTMLElement & {updateComplete: Promise<unknown>}>('fb-parent');
+  const mountIndex = () =>
+    mountTag<HTMLElement & {updateComplete: Promise<unknown>}>('idx-parent');
+  const mountSup = () =>
+    mountTag<HTMLElement & {updateComplete: Promise<unknown>}>('sup-parent');
 
   const childText = (host: HTMLElement, tag: string) =>
     host.shadowRoot?.querySelector(tag)?.shadowRoot?.textContent ?? '';
@@ -464,4 +471,200 @@ const until = async (
     await el._a.goto('/anything');
   });
 
+  test('an unnamed regex group is not mistaken for the tail', async () => {
+    // `/x/(\d+)` yields a positional group `0`, exactly as a wildcard does.
+    // Read from the groups object alone it passed for a tail: link() dropped
+    // the id from this route's own path, and the child was handed '123'.
+    const {el, win, mod} = await mountProbe();
+    el._router.routes.push(mod.probeRoute('/x/(\\d+)'));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (win as any).navigation.navigate('/x/123', {history: 'push'})
+      .finished;
+    await new Promise((r) => setTimeout(r, 100));
+    await el.updateComplete;
+
+    assert.equal(
+      el._router.link(),
+      '/x/123',
+      'the regex group is part of this route, not a tail for a child'
+    );
+    assert.notInclude(
+      childText(el, 'probe-child'),
+      'TAIL=',
+      'the child must not be routed with the id'
+    );
+  });
+
+  test('a wildcard that is not last is not the tail', async () => {
+    // `/x/*/bar` on `/x/zz/bar` yields group 0 = 'zz'. Taken as the tail it
+    // produced a truncated link() — '/x/zz/b', the pathname minus two
+    // characters — and handed the child a mid-path segment.
+    const {el, win, mod} = await mountProbe();
+    el._router.routes.push(mod.probeRoute('/x/*/bar'));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (win as any).navigation.navigate('/x/zz/bar', {history: 'push'})
+      .finished;
+    await new Promise((r) => setTimeout(r, 100));
+    await el.updateComplete;
+
+    assert.equal(el._router.link(), '/x/zz/bar');
+    assert.notInclude(
+      childText(el, 'probe-child'),
+      'TAIL=',
+      'a mid-path wildcard must not be handed to the child'
+    );
+  });
+
+  test('a trailing wildcard after a regex group is still the tail', async () => {
+    // Control for the two above: with a real trailing wildcard the highest
+    // positional group is the tail, and the regex group stays with the parent.
+    const {el, win, mod} = await mountProbe();
+    el._router.routes.push(mod.probeRoute('/x/(\\d+)/*'));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (win as any).navigation.navigate('/x/1/t/u', {history: 'push'})
+      .finished;
+    await until('child received the tail', () =>
+      childText(el, 'probe-child').includes('TAIL=t/u')
+    );
+
+    assert.equal(el._router.link(), '/x/1/');
+  });
+
+  test('a URLPattern route hands its tail to the child', async () => {
+    // Tail detection reads the compiled pattern's `pathname`, so it has to hold
+    // for a route configured with a `URLPattern` instance, not only a path.
+    const {el, win, mod} = await mountProbe();
+    el._router.routes.push(mod.probePattern('/x/*'));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (win as any).navigation.navigate('/x/t', {history: 'push'}).finished;
+    await until('child received the tail', () =>
+      childText(el, 'probe-child').includes('TAIL=t')
+    );
+  });
+
+  test('an optional slash before the trailing wildcard still yields a tail', async () => {
+    // `URLPattern` regenerates `/x{/}?*` as `/x{/}?{*}` — the wildcard wrapped
+    // in a group — so detection has to accept that spelling as well.
+    const {el, win, mod} = await mountProbe();
+    el._router.routes.push(mod.probeRoute('/x{/}?*'));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (win as any).navigation.navigate('/x/t/u', {history: 'push'})
+      .finished;
+    await until('child received the tail', () =>
+      childText(el, 'probe-child').includes('TAIL=t/u')
+    );
+
+    assert.equal(el._router.link(), '/x/');
+  });
+
+  test('a named rest param is not a tail, even after a regex group', async () => {
+    // `/x/(\d+)/:rest*` ends in `*`, but as the modifier on `:rest` — whose
+    // match is keyed by name. The only positional group is the id, and taking
+    // the pattern's trailing `*` at face value would hand that to the child.
+    const {el, win, mod} = await mountProbe();
+    el._router.routes.push(mod.probeRoute('/x/(\\d+)/:rest*'));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (win as any).navigation.navigate('/x/1/t/u', {history: 'push'})
+      .finished;
+    await new Promise((r) => setTimeout(r, 100));
+    await el.updateComplete;
+
+    assert.equal(el._router.link(), '/x/1/t/u');
+    assert.notInclude(
+      childText(el, 'probe-child'),
+      'TAIL=',
+      'the id must not be handed to the child as a tail'
+    );
+  });
+
+  test('an optional trailing wildcard is still the tail when present', async () => {
+    const {el, win, mod} = await mountProbe();
+    el._router.routes.push(mod.probeRoute('/x/*?'));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (win as any).navigation.navigate('/x/t', {history: 'push'}).finished;
+    await until('child received the tail', () =>
+      childText(el, 'probe-child').includes('TAIL=t')
+    );
+
+    assert.equal(el._router.link(), '/x/');
+  });
+
+  test('a nested fallback hands the tail on to its own children', async () => {
+    // A fallback behaved like a literal `/*`, but a nested controller is handed
+    // its tail without a leading slash — which `/*` does not match. So the
+    // fallback rendered with empty params and never routed its own children.
+    const {el, win} = await mountFallback();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (win as any).navigation.navigate('/f/docs/a', {history: 'push'})
+      .finished;
+    await until('grandchild routed through the fallback', () =>
+      (
+        el.shadowRoot
+          ?.querySelector('fb-child')
+          ?.shadowRoot?.querySelector('fb-grand')?.shadowRoot?.textContent ??
+        ''
+      ).includes('DOC-a')
+    );
+
+    assert.include(
+      childText(el, 'fb-child'),
+      'FB=docs/a',
+      'the fallback sees the whole tail as params[0]'
+    );
+  });
+
+  test('an empty tail routes a nested index route', async () => {
+    // `/i/*` on `/i/` hands the child '' — the index of a nested route space,
+    // which has no leading slash to spell it with. `{path: ''}` is that route.
+    const {el, win} = await mountIndex();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nav = (win as any).navigation;
+    await nav.navigate('/i/', {history: 'push'}).finished;
+    await until('index route rendered', () =>
+      childText(el, 'idx-child').includes('INDEX')
+    );
+
+    await nav.navigate('/i/q', {history: 'push'}).finished;
+    await until('param route rendered', () =>
+      childText(el, 'idx-child').includes('ID-q')
+    );
+  });
+
+  test('children are superseded when the parent moves to a route with no tail', async () => {
+    // The propagation loop ran only when the new route had a tail. Moving to a
+    // route without one skipped the children entirely, so a slow in-flight
+    // child enter() stayed current and committed over a URL that had moved on.
+    const {el, win, mod} = await mountSup();
+    mod.SupChild.slowPaths.add('docs/a');
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nav = (win as any).navigation;
+    nav.navigate('/u/5/docs/a', {history: 'push'});
+    await until('child entered docs/a', () =>
+      mod.SupChild.entered.includes('docs/a')
+    );
+
+    nav.navigate('/u/5', {history: 'push'});
+    await new Promise((r) => setTimeout(r, 100));
+
+    mod.SupChild.gates.get('docs/a')?.();
+    await new Promise((r) => setTimeout(r, 150));
+    await el.updateComplete;
+
+    assert.equal(win.location.pathname, '/u/5');
+    assert.notInclude(
+      childText(el, 'sup-child'),
+      'DOC-a',
+      'the abandoned nested route must not commit after the URL moved on'
+    );
+  });
 });
