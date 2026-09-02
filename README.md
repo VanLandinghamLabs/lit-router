@@ -1,6 +1,9 @@
 # lit-navigation-router
 
+[![npm version](https://img.shields.io/npm/v/lit-navigation-router)](https://www.npmjs.com/package/lit-navigation-router)
+
 A router for Lit, built on the [Navigation API](https://developer.mozilla.org/en-US/docs/Web/API/Navigation_API).
+Published on npm as [`lit-navigation-router`](https://www.npmjs.com/package/lit-navigation-router).
 
 Fork of [`@lit-labs/router`](https://github.com/lit/lit/tree/main/packages/labs/router)
 — see [NOTICE.md](./NOTICE.md) for provenance, licence and the full list of
