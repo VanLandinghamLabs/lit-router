@@ -78,7 +78,7 @@ export class NavChild extends LitElement {
 
   _routes = new Routes(this, [
     // No leading slash: the tail group from the parent's `/x/*` is `a`, not
-    // `/a` — the convention upstream's own child fixtures use.
+    // `/a`, the convention upstream's own child fixtures use.
     {
       path: 'a',
       enter: () => this._hold('a'),
@@ -127,7 +127,7 @@ export class NavStrict extends LitElement {
 /**
  * Two Routes controllers on one host. Disconnect + reconnect makes each
  * register the other as its child, so `_childRoutes` genuinely contains a
- * cycle — which an unguarded recursive walk turns into a stack overflow.
+ * cycle, which an unguarded recursive walk turns into a stack overflow.
  */
 @customElement('nav-twin')
 export class NavTwin extends LitElement {
@@ -234,7 +234,7 @@ export class ManyChild extends LitElement {
 }
 
 /**
- * Eleven wildcards, so the tail is group `10` — the point where a
+ * Eleven wildcards, so the tail is group `10`, the point where a
  * lexicographic key comparison diverges from a numeric one ('9' > '10').
  */
 @customElement('many-parent')
@@ -307,7 +307,7 @@ export class FbGrand extends LitElement {
 
 /**
  * A nested controller whose *fallback* mounts a grandchild. It is handed the
- * tail from `/f/*` — no leading slash — and the fallback must pass it on.
+ * tail from `/f/*` with no leading slash, and the fallback must pass it on.
  */
 @customElement('fb-child')
 export class FbChild extends LitElement {
@@ -395,7 +395,7 @@ const renderSupChild = () => html`<sup-child></sup-child>`;
 
 /**
  * Both routes render the child through the same template, so on the move from
- * `/u/5/docs/a` to `/u/5` lit keeps the same `sup-child` element connected —
+ * `/u/5/docs/a` to `/u/5` lit keeps the same `sup-child` element connected,
  * which is what makes a stale nested commit observable.
  */
 @customElement('sup-parent')

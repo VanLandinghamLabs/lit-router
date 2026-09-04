@@ -11,9 +11,9 @@ import {Routes} from './routes.js';
 
 /**
  * The slice of `NavigateEvent` this router reads. Declared locally rather than
- * typing the handler `any`: these properties *are* the correctness boundary, so
- * a typo like `hashchange` for `hashChange` would silently disable a filter
- * forever. Names verified against Chromium's `NavigateEvent.prototype`.
+ * typing the handler `any`, because these properties are the correctness
+ * boundary: a typo like `hashchange` for `hashChange` would silently disable a
+ * filter forever. Names verified against Chromium's `NavigateEvent.prototype`.
  */
 interface NavigateEventLike {
   readonly canIntercept: boolean;
@@ -49,21 +49,20 @@ const getNavigation = (): NavigationLike | undefined =>
   (window as unknown as {navigation?: NavigationLike}).navigation;
 
 /**
- * The current location as a path string, in the form `goto()` parses.
- *
- * Only the origin is dropped: this router matches within one origin, and
- * `_onNavigate` declines anything else before it gets here.
+ * The current location as a path string, in the form `goto()` parses. Only the
+ * origin is dropped; `_onNavigate` declines anything cross-origin before it
+ * gets here.
  */
 const currentPath = (): string =>
   window.location.pathname + window.location.search + window.location.hash;
 
 /**
- * True when the Navigation API is available — Baseline Newly Available since
+ * True when the Navigation API is available. Baseline Newly Available since
  * January 2026 (Chrome/Edge, Safari 26.2, Firefox 147).
  *
- * This router **requires** it. Exported so an app can detect an unsupported
- * engine at boot and say so, rather than leaving the user to notice that every
- * link reloads the page.
+ * This router requires it. Exported so an app can detect an unsupported engine
+ * at boot and say so, rather than leaving the user to notice that every link
+ * reloads the page.
  */
 export const supportsNavigationApi = (): boolean =>
   typeof window !== 'undefined' &&
@@ -72,49 +71,43 @@ export const supportsNavigationApi = (): boolean =>
 /**
  * A root-level router that intercepts navigation via the Navigation API.
  *
- * This class extends Routes so that it can also have a route configuration.
- *
- * There should only be one Router instance on a page, since the Router
- * installs a global listener. Nested routes should be configured with the
- * `Routes` class.
+ * Extends Routes, so it carries a route configuration of its own. Use one
+ * Router per page, since it installs a global listener, and `Routes` for
+ * nested route spaces.
  *
  * ## Why the Navigation API
  *
- * Upstream intercepted navigation with a global click listener plus `popstate`
- * and committed with `history.pushState()`. That is structurally racy:
- * `pushState` is synchronous and `popstate` fires *after* the URL has already
- * moved, but `goto()` awaits `route.enter()` before swapping the outlet. The
- * URL leads and the outlet lags, leaving two sources of truth — the outgoing
- * route re-renders with stale params, and two quick navigations commit in
- * whatever order their `enter()` hooks happen to resolve.
+ * Upstream intercepted with a global click listener plus `popstate`, and
+ * committed with `history.pushState()`. That is structurally racy: `pushState`
+ * is synchronous and `popstate` fires after the URL has moved, but `goto()`
+ * awaits `route.enter()` before swapping the outlet. The URL leads and the
+ * outlet lags, leaving two sources of truth, so the outgoing route re-renders
+ * with stale params and two quick navigations commit in whatever order their
+ * `enter()` hooks resolve.
  *
  * `navigateEvent.intercept({handler})` collapses that. The browser commits the
- * URL and holds the navigation un-finished while the handler runs, and it
- * aborts `navigateEvent.signal` when a newer navigation supersedes this one —
- * which `goto()` honours, so a superseded route can no longer win the outlet.
+ * URL and holds the navigation unfinished while the handler runs, and aborts
+ * `navigateEvent.signal` when a newer navigation supersedes this one, which
+ * `goto()` honours.
  *
  * ## No legacy fallback
  *
- * An earlier version of this fork kept upstream's click/popstate path for
- * pre-2026 engines. It was removed deliberately. Ten review rounds found
- * divergences between the two paths and **every one was in the click handler**,
- * never in this one — which is structural, not luck: this handler reads a
- * decision the browser has already made, while the click handler had to
- * re-derive it, re-implementing the rules for choosing a navigable, the
- * fragment-navigation predicate, and the modifier-key rules. Each round found
- * another place where the re-implementation and the spec disagreed.
+ * An earlier version kept upstream's click/popstate path for pre-2026 engines.
+ * It was removed because every divergence review turned up landed in the click
+ * handler, never here. That is structural: this handler reads a decision the
+ * browser already made, while the click handler had to re-derive it,
+ * re-implementing the rules for choosing a navigable, the fragment-navigation
+ * predicate, and the modifier-key rules.
  *
- * On an engine without the API, links fall back to ordinary full page loads.
- * For an app whose server serves the shell on every route that still works —
- * it is slower, not broken — and `supportsNavigationApi()` lets you detect it.
- * If real pre-2026 support is ever needed, use a Navigation API polyfill: one
- * decision path, with compatibility isolated in a layer whose whole job is
- * spec accuracy.
+ * Without the API, links fall back to full page loads. For an app whose server
+ * serves the shell on every route that is slower, not broken, and
+ * `supportsNavigationApi()` detects it. For real pre-2026 support, pair this
+ * with a Navigation API polyfill rather than a second code path.
  */
 export class Router extends Routes {
   /**
-   * Options forwarded to `navigateEvent.intercept()`. Leaving these unset
-   * gives the browser's default scroll and focus handling.
+   * Options forwarded to `navigateEvent.intercept()`. Leaving these unset gives
+   * the browser's default scroll and focus handling.
    */
   interceptOptions?: InterceptOptions;
 
@@ -122,21 +115,18 @@ export class Router extends Routes {
 
   override hostConnected() {
     super.hostConnected();
-    // Gated on the exported predicate, not on `navigation !== undefined`:
-    // a stub or partial polyfill under that name would otherwise make this
-    // branch throw out of connectedCallback while `supportsNavigationApi()`
-    // told the app it was unsupported — and then even the initial render below
-    // would not run.
+    // Gated on the exported predicate, not on `navigation !== undefined`. A
+    // stub or partial polyfill under that name would otherwise throw out of
+    // connectedCallback while `supportsNavigationApi()` reported the engine
+    // unsupported, and then even the initial render below would not run.
     if (supportsNavigationApi()) {
       getNavigation()!.addEventListener('navigate', this._onNavigate);
       this._listening = true;
     }
-    // Kick off routed rendering by going to the current URL. Done even without
-    // the API: a full page load still renders the right route, which is what
-    // makes the unsupported-engine degradation "slow" rather than "blank".
-    // Surfaced rather than left as a bare unhandled rejection, matching the
-    // convention in routes.ts: on an engine without the API this is the *only*
-    // rendering path, and a deep link with no matching route throws here.
+    // Render the current URL. Done even without the API, which is what makes
+    // the unsupported-engine degradation slow rather than blank. The rejection
+    // is surfaced because on such an engine this is the only rendering path,
+    // and a deep link with no matching route throws here.
     void this.goto(currentPath()).catch((err) => {
       queueMicrotask(() => {
         throw err;
@@ -157,58 +147,51 @@ export class Router extends Routes {
    * `navigation.navigate()`, `history.pushState()`, and back/forward.
    */
   private _onNavigate = (e: NavigateEventLike) => {
-    // Not ours to handle: anything the browser says cannot be intercepted,
-    // downloads, and POST form submissions.
-    //
     // `!= null`, not `!== null`: the spec types both as nullable-but-present,
-    // but a polyfill that leaves either unset would make a strict check true
-    // for every ordinary link and silently decline the whole app.
+    // but a polyfill leaving either unset would make a strict check true for
+    // every ordinary link and silently decline the whole app.
     if (!e.canIntercept || e.downloadRequest != null || e.formData != null) {
       return;
     }
 
-    // Fragment-only moves belong to the browser unless a route actually reads
-    // the fragment. Intercepting them unconditionally would cost every
-    // pathname-only app its native in-page scrolling — and re-render the same
-    // route to no effect — while declining them unconditionally is the
+    // Fragment-only moves belong to the browser unless a route reads the
+    // fragment. Intercepting them unconditionally costs every pathname-only app
+    // its native in-page scrolling; declining them unconditionally is the
     // lit/lit#3517 bug this router inherited.
     if (e.hashChange && !this._constrainsHash()) {
       return;
     }
 
     // Reloads must stay reloads. `canIntercept` is true for them, so without
-    // this `location.reload()` silently degrades to re-running goto() on the
-    // same path — the document is never replaced, breaking the standard
-    // "new version available, reload" escape hatch. (It would also disagree
-    // with the browser's own refresh button, which is not interceptable.)
+    // this `location.reload()` degrades to re-running goto() on the same path.
+    // The document is never replaced, breaking the "new version available,
+    // reload" escape hatch and disagreeing with the browser's refresh button.
     if (e.navigationType === 'reload') {
       return;
     }
 
-    // `rel="external"` is a convention this router honours — it is not defined
-    // by HTML or by the Navigation API, so the browser will not decline these
-    // for us. Best-effort: `sourceElement` is not in every engine, and is
-    // absent for programmatic navigation.
+    // `rel="external"` is this router's convention, not HTML's or the
+    // Navigation API's, so the browser will not decline these for us.
+    // Best-effort: `sourceElement` is missing in some engines and absent for
+    // programmatic navigation.
     if (e.sourceElement?.getAttribute?.('rel') === 'external') {
       return;
     }
 
-    // Read per navigation rather than cached at module scope: the value cannot
+    // Read per navigation rather than cached at module scope. The value cannot
     // change, but reading it on import makes merely importing this module throw
-    // where there is no `location` (SSR, a bundler evaluating for tree-shaking
-    // under the package's `sideEffects: false` claim).
+    // where there is no `location`, such as SSR or a bundler evaluating for
+    // tree-shaking under the package's `sideEffects: false` claim.
     const url = new URL(e.destination.url);
     if (url.origin !== window.location.origin) {
       return;
     }
 
-    // Only intercept what we can actually render. `canIntercept` is true for
-    // any same-origin URL, including cross-document ones — so without this a
-    // link to a server-rendered page, an export endpoint, or a GET form
-    // (whose `formData` is null) gets swallowed: the URL commits, goto()
-    // throws "No route found", and the address bar is left pointing somewhere
-    // the outlet never went. Declining lets the browser do the real
-    // navigation, which is the correct outcome.
+    // Only intercept what we can render. `canIntercept` is true for any
+    // same-origin URL, including cross-document ones, so without this a link to
+    // a server-rendered page, an export endpoint, or a GET form (whose
+    // `formData` is null) gets swallowed: the URL commits, goto() throws, and
+    // the address bar points somewhere the outlet never went.
     const path = url.pathname + url.search + url.hash;
     if (!this.hasRouteFor(path)) {
       return;
