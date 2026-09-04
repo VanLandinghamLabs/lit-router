@@ -1,0 +1,27 @@
+version: 2
+
+updates:
+  # Workflow action pins. Grouped into one PR: they are updated together in
+  # practice, and a split would mean two CI runs to land what is usually a
+  # pair of version bumps.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # devDependencies only move the lockfile and the test toolchain, so they are
+  # grouped and left to CI to judge. `lit` is deliberately not grouped with
+  # them: it is this package's only runtime dependency, its range is
+  # intentionally wide (`^3.0.0`), and a PR against it means a new major that
+  # wants a human decision about the supported range, not a lockfile bump.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      dev-dependencies:
+        dependency-type: development
