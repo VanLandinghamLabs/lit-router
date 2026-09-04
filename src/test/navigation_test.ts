@@ -109,7 +109,7 @@ const until = async (
     const {el, win} = await mount();
     // /a's enter() is held open; /b's resolves immediately. Without honouring
     // navigateEvent.signal, /a commits whenever it is released and the outlet
-    // ends up on a route the URL left — the shape of arcsync #632/#640.
+    // ends up on a route the URL left, the shape of arcsync #632/#640.
     el.slowPaths.add('/a');
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -141,7 +141,7 @@ const until = async (
 
   test('programmatic navigation is intercepted, not just anchor clicks', async () => {
     const {el, win} = await mount();
-    // The legacy path only saw anchor clicks and popstate — a bare
+    // The legacy path only saw anchor clicks and popstate. A bare
     // history.pushState() or navigation.navigate() was invisible to it.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (win as any).navigation.navigate('/a').finished;
@@ -204,7 +204,7 @@ const until = async (
 
   test('a superseded navigation does not win a NESTED outlet', async () => {
     // Nested supersession has to be covered by the per-controller goto
-    // counter, because children are deliberately NOT awaited (see routes.ts —
+    // counter, because children are deliberately NOT awaited (see routes.ts,
     // awaiting the outgoing branch was tried and reverted). Without the
     // counter a superseded child commits whenever its enter() resolves,
     // reintroducing the whole bug one level down on exactly the nested routes
@@ -291,7 +291,7 @@ const until = async (
 
   test('an aborted signal stands a goto down even with no newer goto', async () => {
     // The per-controller counter covers supersession by a *newer* goto. The
-    // signal covers cancellation where no newer goto ever arrives — the user
+    // signal covers cancellation where no newer goto ever arrives: the user
     // hitting stop, or another listener cancelling the navigation. Exercised
     // against Routes directly, since Router only ever supplies a real
     // NavigateEvent signal.
@@ -316,7 +316,7 @@ const until = async (
 
 
   test('a child that cannot render the new tail is still superseded', async () => {
-    // The propagation loop skips a child with no route for the new tail — the
+    // The propagation loop skips a child with no route for the new tail, the
     // outgoing branch, mid-swap. Skipping must still bump that child's goto
     // counter, or an in-flight nested enter() stays current and commits over a
     // URL that has moved on. Removing the abort signal is only safe because
@@ -368,7 +368,7 @@ const until = async (
 
   test('supersession reaches a grandchild under a skipped child', async () => {
     // A skipped child never runs its own propagation loop, so bumping only its
-    // counter leaves an in-flight grandchild enter() current — the same defect
+    // counter leaves an in-flight grandchild enter() current, the same defect
     // one level deeper than the child case.
     const {el, win, mod} = await mountDeep();
     mod.DeepGrand.slowPaths.add('s');
@@ -403,7 +403,7 @@ const until = async (
     // getTailGroup selects the wildcard's positional group. An unanchored
     // /\d+/ also accepts a *named* group whose name contains a digit, and
     // since a letter sorts above a digit lexicographically, `id2` then beat
-    // the real tail group `0` — so the child was handed the param value ('5')
+    // the real tail group `0`, so the child was handed the param value ('5')
     // instead of the tail ('docs/a') and rendered nothing.
     const {el, win} = await mountTail();
 
@@ -412,7 +412,7 @@ const until = async (
       history: 'push',
     }).finished;
     // The child mounts as a result of the parent's render, so its own goto()
-    // runs after this navigation has finished — poll rather than sleep.
+    // runs after this navigation has finished, so poll rather than sleep.
     await until('child received the wildcard tail', () =>
       childText(el, 'tail-child').includes('DOC-a')
     );
@@ -443,7 +443,7 @@ const until = async (
     // (a repeat() reorder, a tab swap) leaves the sibling's listener installed,
     // so on the second connect it claims the re-dispatching controller as its
     // own child and the two point at each other. That cycle turns any
-    // recursive walk — and goto()'s own propagation loop — into a stack
+    // recursive walk, and goto()'s own propagation loop, into a stack
     // overflow.
     const {win, doc, mod} = await loadFrame();
     win.history.pushState({}, '', '/');
@@ -498,8 +498,8 @@ const until = async (
 
   test('a wildcard that is not last is not the tail', async () => {
     // `/x/*/bar` on `/x/zz/bar` yields group 0 = 'zz'. Taken as the tail it
-    // produced a truncated link() — '/x/zz/b', the pathname minus two
-    // characters — and handed the child a mid-path segment.
+    // produced a truncated link(), '/x/zz/b', the pathname minus two
+    // characters, and handed the child a mid-path segment.
     const {el, win, mod} = await mountProbe();
     el._router.routes.push(mod.probeRoute('/x/*/bar'));
 
@@ -547,8 +547,8 @@ const until = async (
   });
 
   test('an optional slash before the trailing wildcard still yields a tail', async () => {
-    // `URLPattern` regenerates `/x{/}?*` as `/x{/}?{*}` — the wildcard wrapped
-    // in a group — so detection has to accept that spelling as well.
+    // `URLPattern` regenerates `/x{/}?*` as `/x{/}?{*}`, the wildcard wrapped
+    // in a group, so detection has to accept that spelling as well.
     const {el, win, mod} = await mountProbe();
     el._router.routes.push(mod.probeRoute('/x{/}?*'));
 
@@ -563,7 +563,7 @@ const until = async (
   });
 
   test('a named rest param is not a tail, even after a regex group', async () => {
-    // `/x/(\d+)/:rest*` ends in `*`, but as the modifier on `:rest` — whose
+    // `/x/(\d+)/:rest*` ends in `*`, but as the modifier on `:rest`, whose
     // match is keyed by name. The only positional group is the id, and taking
     // the pattern's trailing `*` at face value would hand that to the child.
     const {el, win, mod} = await mountProbe();
@@ -598,7 +598,7 @@ const until = async (
 
   test('a nested fallback hands the tail on to its own children', async () => {
     // A fallback behaved like a literal `/*`, but a nested controller is handed
-    // its tail without a leading slash — which `/*` does not match. So the
+    // its tail without a leading slash, which `/*` does not match. So the
     // fallback rendered with empty params and never routed its own children.
     const {el, win} = await mountFallback();
 
@@ -622,7 +622,7 @@ const until = async (
   });
 
   test('an empty tail routes a nested index route', async () => {
-    // `/i/*` on `/i/` hands the child '' — the index of a nested route space,
+    // `/i/*` on `/i/` hands the child '', the index of a nested route space,
     // which has no leading slash to spell it with. `{path: ''}` is that route.
     const {el, win} = await mountIndex();
 
