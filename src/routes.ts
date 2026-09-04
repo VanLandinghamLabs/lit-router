@@ -37,25 +37,14 @@ export interface URLPatternRouteConfig extends BaseRouteConfig {
 }
 
 /**
- * The part of `URLPattern` this router uses.
- *
- * Structural rather than a reference to the global, so the emitted `.d.ts` is
- * self-contained. The triple-slash reference above is not carried into
- * declaration output and `URLPattern` is not in TypeScript's `lib.dom`, so
- * typing against the global fails a consumer build with `TS2304`.
+ * The part of `URLPattern` this router uses. Structural, not a reference to the
+ * global: `URLPattern` is not in TypeScript's `lib.dom`, so typing against it
+ * fails a consumer build with `TS2304`.
  */
 export interface URLPatternLike {
-  /**
-   * The pathname pattern string. Read to tell a trailing wildcard from any
-   * other positional group, which the groups object alone cannot. See `tailOf`.
-   */
+  /** Read by `tailOf`, which the groups object alone cannot answer. */
   readonly pathname: string;
-  /**
-   * The hash pattern string. `'*'` means the route places no constraint on the
-   * fragment, which is what `URLPattern` fills in for an omitted component.
-   * `Router` reads this to decide whether a fragment-only navigation is its
-   * business or the browser's.
-   */
+  /** `'*'` means unconstrained. `Router` gates hash interception on this. */
   readonly hash: string;
   test(input: RouteLocation): boolean;
   exec(input: RouteLocation): {
@@ -66,11 +55,9 @@ export interface URLPatternLike {
 }
 
 /**
- * The parts of a location this router matches against.
- *
- * `search` and `hash` carry no leading `?` or `#`. A real `URLPattern`
- * canonicalises either form away, but `URLPatternLike` admits other
- * implementations, so the delimiters are stripped here instead.
+ * The parts of a location this router matches against. `search` and `hash`
+ * carry no leading `?` or `#`: a real `URLPattern` canonicalises either form
+ * away, but `URLPatternLike` admits implementations that do not.
  */
 export interface RouteLocation {
   pathname: string;
@@ -79,8 +66,6 @@ export interface RouteLocation {
 }
 
 /**
- * Splits `path` into the components a pattern is matched against.
- *
  * Not `new URL(path, origin)`: a nested controller's path is a tail, a bare
  * relative segment like `abc`, which `URL` would resolve and mangle.
  */
@@ -124,26 +109,17 @@ const getPattern = (route: RouteConfig): URLPatternLike => {
 };
 
 /**
- * Matches a pathname pattern ending in a wildcard, in the forms
- * `URLPattern.prototype.pathname` regenerates: a bare `*` (which a trailing
- * `(.*)` normalises to) or `{*}`, either optionally followed by `?`.
- *
- * Excludes an escaped `\*` and a `*` that modifies a group (`(\d+)*`, `{/}*`)
- * or a named param (`:rest*`). Those exclusions decide correctness when an
- * earlier positional group exists, as in `/x/(\d+)/:rest*`, where that group
- * would otherwise be taken for the tail.
+ * A trailing wildcard as `URLPattern.prototype.pathname` regenerates it: `*` or
+ * `{*}`, optionally `?`. Excludes an escaped `\*` and a `*` modifying a group
+ * or named param (`(\d+)*`, `{/}*`, `:rest*`), which would otherwise let an
+ * earlier group be taken for the tail. See #4.
  */
 const TRAILING_WILDCARD = /(?:(?<![\\)}]|:[\w$]+)\*|\{\*\})\??$/;
 
 /**
- * What a trailing wildcard (`/foo/*`) captured, or undefined when the pattern
- * has none.
- *
- * Decided from the pattern, not the groups object. An unnamed regex group
- * (`/post/(\d+)`) and a non-final wildcard (`/foo/*` followed by `/bar`) are
- * keyed by index exactly as a tail is; reading either as one truncated `link()`
- * and handed a child the wrong segment. A trailing wildcard is the last group
- * in its pattern, so its key is the highest positional index.
+ * What a trailing wildcard captured, or undefined when there is none. Decided
+ * from the pattern, not the groups object: an unnamed group (`/post/(\d+)`) and
+ * a non-final wildcard are keyed by index exactly as a tail is. See #4.
  */
 const tailOf = (
   route: RouteConfig,
@@ -154,8 +130,7 @@ const tailOf = (
   }
   let tailIndex = -1;
   for (const key of Object.keys(params)) {
-    // Numeric, not lexicographic: '9' sorts above '10' as a string, so eleven
-    // or more wildcards picked group 9 as the tail.
+    // Numeric, not lexicographic: '9' > '10' as strings.
     if (/^\d+$/.test(key) && Number(key) > tailIndex) {
       tailIndex = Number(key);
     }
@@ -171,17 +146,14 @@ export class Routes implements ReactiveController {
   private readonly _host: ReactiveControllerHost & HTMLElement;
 
   /**
-   * The installed routes, in precedence order.
-   *
-   * Mutable, but mutating it starts no route transition. If the change means a
-   * different route now matches, call `goto()`.
+   * The installed routes, in precedence order. Mutable, but mutating it starts
+   * no route transition; call `goto()` if a different route now matches.
    */
   routes: Array<RouteConfig> = [];
 
   /**
-   * Matched when no route in {@link routes} does. Behaves like `/*`:
-   * `params[0]` is the whole pathname minus any leading slash, and is handed to
-   * child controllers as their tail.
+   * Matched when no route in {@link routes} does. Behaves like `/*`, so
+   * `params[0]` is the whole pathname minus any leading slash.
    */
   fallback?: BaseRouteConfig;
 
@@ -194,10 +166,7 @@ export class Routes implements ReactiveController {
 
   private _currentPathname: string | undefined;
   private _currentTail: string | undefined;
-  /**
-   * Ambient rather than tailed: only the pathname nests, so a child is handed
-   * the parent's tail as its pathname but the same search and hash.
-   */
+  /** Ambient, not tailed: only the pathname nests. */
   private _currentSearch = '';
   private _currentHash = '';
   private _currentRoute: RouteConfig | undefined;
@@ -205,10 +174,8 @@ export class Routes implements ReactiveController {
     [key: string]: string | undefined;
   } = {};
 
-  /**
-   * Must be called in hostDisconnected, or this controller can receive a tail
-   * match meant for another route.
-   */
+  /** Must run in hostDisconnected, or this controller can receive another
+   * route's tail match. */
   // TODO (justinfagnani): Do we need this now that we have a direct reference
   // to the parent? We can call `this._parentRoutes.disconnect(this)`.
   private _onDisconnect: (() => void) | undefined;
@@ -240,16 +207,12 @@ export class Routes implements ReactiveController {
 
   /**
    * Navigates this controller to `path`, which may carry a search and hash.
+   * Navigates child routes but not parent ones, so it is not yet a general page
+   * navigation API.
    *
-   * Does not navigate parent routes, so it is not yet a general page
-   * navigation API. It does navigate child routes when the path matches a
-   * pattern with a tail wildcard.
-   *
-   * Pass `options.signal` to make the navigation abandonable. `enter()` is
-   * awaited, so a second `goto()` can start and finish while the first is still
-   * resolving; without a signal the slower one commits last and the outlet ends
-   * up on a route the URL has left. `Router` threads `NavigateEvent.signal`
-   * through for this.
+   * `options.signal` makes the navigation abandonable. `enter()` is awaited, so
+   * a second `goto()` can finish while the first is still resolving; without a
+   * signal the slower one commits last onto a route the URL has left.
    */
   async goto(path: string, options?: {signal?: AbortSignal}) {
     // TODO (justinfagnani): handle absolute vs relative paths separately.
@@ -257,18 +220,15 @@ export class Routes implements ReactiveController {
     const location = parseLocation(path);
     const {pathname} = location;
 
-    // Last-goto-wins, per controller. The navigation signal alone is not
-    // enough: a child mounts as a result of its parent's render, so its first
-    // goto() comes from `_onRoutesConnected`, after the parent's navigation has
-    // finished and therefore with a signal that will never abort. Without this
-    // counter a slow first child load commits over a newer one. It also keeps
-    // `Routes` correct on its own, with no `Router` and no Navigation API.
+    // Last-goto-wins. The signal alone is not enough: a child's first goto()
+    // comes from `_onRoutesConnected`, after the parent's navigation finished,
+    // so its signal never aborts. Also keeps `Routes` correct standalone.
     const seq = ++this._gotoSeq;
     let tail: string | undefined;
 
     if (this.routes.length === 0 && this.fallback === undefined) {
-      // A controller with no routes of its own acts as if it had one `/*`
-      // route, passing the whole pathname on as a tail.
+      // No routes of its own acts as a single `/*`, passing the whole pathname
+      // on as a tail.
       tail = pathname;
       this._currentPathname = '';
       this._currentParams = {0: tail};
@@ -285,8 +245,7 @@ export class Routes implements ReactiveController {
           return;
         }
       }
-      // A newer navigation superseded this one while `enter` was awaiting.
-      // Committing now would swap the outlet onto a route the URL has left.
+      // Superseded while `enter` awaited; committing would strand the outlet.
       if (options?.signal?.aborted === true || seq !== this._gotoSeq) {
         return;
       }
@@ -301,17 +260,12 @@ export class Routes implements ReactiveController {
     this._currentSearch = location.search;
     this._currentHash = location.hash;
 
-    // Deliberately not awaited. `requestUpdate()` has not run yet, so
-    // `_childRoutes` still holds the outgoing branch's controller: awaiting it
-    // would gate the parent's outlet swap on an `enter()` for a tail that
-    // controller will never render, and a child with no route for the new tail
-    // would throw `No route found` out of here, skipping `requestUpdate()` and
-    // stranding the outlet on a committed URL. Supersession is the counter's
-    // job, not the await's.
+    // Not awaited. `requestUpdate()` has not run, so `_childRoutes` still holds
+    // the outgoing branch: awaiting gates the parent's swap on a controller
+    // that will never render, and its `No route found` would skip
+    // `requestUpdate()` below and strand the outlet on a committed URL.
     //
-    // Runs even with no tail: a route without one has nothing for children to
-    // render, but they must still be superseded, or a child mid-`enter()` for
-    // the previous tail commits over a URL that has moved on.
+    // Runs even with no tail, so children still get superseded. See #7.
     for (const childRoutes of this._childRoutes) {
       this._routeChild(childRoutes, tail);
     }
@@ -333,15 +287,12 @@ export class Routes implements ReactiveController {
   }
 
   /**
-   * Hands a tail match to a child controller. Shared by the propagation loop in
-   * `goto()` and the late-mount path in `_onRoutesConnected`, so identical
-   * input cannot be silent on one and an uncaught throw on the other.
+   * Hands a tail match to a child. Shared by `goto()`'s propagation loop and the
+   * late-mount path, so identical input behaves identically on both.
    *
-   * A child with no route for the new tail is expected, not an error: the
-   * outgoing branch mid-swap, or a deep link the child cannot render. Filtered
-   * structurally rather than by swallowing rejections, so a genuine `enter()`
-   * rejection still surfaces. Skipping must still supersede, or an in-flight
-   * child navigation stays current and can commit over a URL that has moved on.
+   * A child with no route for the tail is expected, not an error: the outgoing
+   * branch mid-swap, or a deep link it cannot render. Filtered structurally so
+   * a genuine `enter()` rejection still surfaces. Skipping must still supersede.
    */
   private _routeChild(child: Routes, tail: string | undefined) {
     if (tail === undefined) {
@@ -363,22 +314,16 @@ export class Routes implements ReactiveController {
     });
   }
 
-  /**
-   * Invalidate any in-flight `goto()` on this controller without starting a
-   * new one.
-   */
+  /** Invalidate any in-flight `goto()` here without starting a new one. */
   private _supersede(seen: Set<Routes> = new Set()): void {
-    // Defence in depth. `hostDisconnected` removes the listener that could
-    // produce a `_childRoutes` cycle, and a test asserts one cannot form, but
-    // an unguarded recursive walk over a cycle is a stack overflow rather than
-    // a misrender.
+    // Defence in depth: a `_childRoutes` cycle cannot form (hostDisconnected,
+    // plus a test), but an unguarded walk over one is a stack overflow.
     if (seen.has(this)) {
       return;
     }
     seen.add(this);
     this._gotoSeq++;
-    // On the navigating branch the child's own propagation loop reaches the
-    // grandchildren, but a skipped child never runs one, so without this an
+    // A skipped child never runs its own propagation loop, so recurse or an
     // in-flight grandchild `enter()` stays current.
     for (const child of this._childRoutes) {
       child._supersede(seen);
@@ -386,14 +331,9 @@ export class Routes implements ReactiveController {
   }
 
   /**
-   * True when this controller or any below it has a route that constrains the
-   * hash.
-   *
-   * `Router` gates interception of fragment-only navigation on this. Ungated, a
-   * pathname-only app would have every in-page anchor swallowed and re-rendered
-   * instead of scrolled. Walks children because a nested controller may route
-   * on the hash while the top-level `Router`, the only one that sees the
-   * navigate event, does not.
+   * True when this controller or any below it constrains the hash. `Router`
+   * gates fragment-only interception on this, so a pathname-only app keeps
+   * native scrolling. Walks children because only the root sees the event.
    */
   protected _constrainsHash(seen: Set<Routes> = new Set()): boolean {
     // Cycle guard, matching `_supersede`; see the note there.
@@ -408,32 +348,25 @@ export class Routes implements ReactiveController {
   }
 
   /**
-   * True when this controller can render `path`.
-   *
-   * `Router` gates interception on this. Intercepting a path we cannot render
-   * commits the URL and then throws out of `goto()`, leaving the address bar
-   * moved and the outlet stale; declining lets the browser handle a
-   * server-rendered page, an export endpoint, or a GET form.
+   * True when this controller can render `path`. `Router` gates interception on
+   * this: intercepting what we cannot render commits the URL and then throws,
+   * leaving the address bar moved and the outlet stale.
    */
   hasRouteFor(path: string): boolean {
-    // A fallback matches everything, and a controller with no routes behaves as
-    // if it had one `/*` route. Worth short-circuiting, since `Router` asks
-    // this on every navigation.
+    // A fallback matches everything, and no routes behaves as one `/*`. Worth
+    // short-circuiting: `Router` asks this on every navigation.
     if (this.fallback !== undefined || this.routes.length === 0) {
       return true;
     }
-    // `test()`, not `_match()`: this needs only the yes/no, and `exec()` pays
-    // ~8x on a hit to build a groups object the caller would throw away.
+    // `test()`, not `_match()`: `exec()` pays ~8x on a hit to build groups the
+    // caller would throw away.
     const location = parseLocation(path);
     return this.routes.some((r) => getPattern(r).test(location));
   }
 
   /**
-   * The first route matching `location` with its parsed parameters, or the
-   * fallback's match if one is configured.
-   *
-   * One `exec()` per candidate rather than `test()` to select and `exec()` to
-   * extract, which ran the winning pattern twice.
+   * The first route matching `location`, or the fallback's match. One `exec()`
+   * per candidate; selecting with `test()` first ran the winner twice.
    */
   private _match(location: RouteLocation):
     | {
@@ -448,10 +381,8 @@ export class Routes implements ReactiveController {
         const params: {[key: string]: string | undefined} = {
           ...result.pathname.groups,
         };
-        // Named groups only. Every component numbers its positional groups from
-        // zero independently, so `/child/*` with a hash of `*` yields a "0" in
-        // both, and `tailOf` picks the tail by highest numeric key. Merging
-        // them would let a fragment masquerade as the tail.
+        // Named only. Every component numbers positional groups from zero, so
+        // a merged "0" could masquerade as the tail. See #13.
         for (const groups of [result.search.groups, result.hash.groups]) {
           for (const [key, value] of Object.entries(groups)) {
             if (!/^\d+$/.test(key)) {
@@ -465,11 +396,8 @@ export class Routes implements ReactiveController {
     if (this.fallback === undefined) {
       return undefined;
     }
-    // The fallback behaves like a `/*` path; the `path` here only makes it a
-    // valid RouteConfig. Matched by hand rather than with a real `/*` pattern
-    // because a nested controller is handed its tail without a leading slash,
-    // which `/*` rejects, so a nested fallback matched nothing and its own
-    // children never routed.
+    // Matched by hand, not with a real `/*` pattern: a nested controller gets
+    // its tail without a leading slash, which `/*` rejects. See #5.
     const {pathname} = location;
     const tail = pathname.startsWith('/') ? pathname.slice(1) : pathname;
     return {route: {...this.fallback, path: '/*'}, params: {0: tail}, tail};
@@ -486,11 +414,9 @@ export class Routes implements ReactiveController {
   }
 
   hostDisconnected() {
-    // Without this, a host that is disconnected and reconnected (a repeat()
-    // reorder, a tab swap) leaves the sibling controller's listener installed,
-    // so on the second connect it claims the re-dispatching controller as its
-    // child and the pair point at each other: a `_childRoutes` cycle, which
-    // recursive walks turn into a stack overflow.
+    // Without this, a disconnected and reconnected host leaves a sibling's
+    // listener installed and the two claim each other as children: a
+    // `_childRoutes` cycle, which recursive walks turn into a stack overflow.
     this._host.removeEventListener(
       RoutesConnectedEvent.eventName,
       this._onRoutesConnected
@@ -517,16 +443,12 @@ export class Routes implements ReactiveController {
       }
     };
 
-    // A child mounting under an existing tail match missed the propagation loop
-    // in goto() that ran before it existed, so catch it up.
+    // Catch up a child that mounted after goto()'s propagation loop ran.
     this._routeChild(childRoutes, this._currentTail);
   };
 }
 
-/**
- * Fired from a Routes controller when its host connects, to announce the child
- * route and connect it to a parent controller.
- */
+/** Announces a Routes controller to its parent when the host connects. */
 export class RoutesConnectedEvent extends Event {
   static readonly eventName = 'lit-routes-connected';
   readonly routes: Routes;
