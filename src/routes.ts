@@ -139,6 +139,201 @@ const tailOf = (
 };
 
 /**
+ * One piece of a pathname pattern, as `parsePattern` understands it.
+ */
+type PatternNode =
+  | {kind: 'literal'; text: string}
+  | {kind: 'param'; name: string; optional: boolean}
+  | {kind: 'wildcard'; index: number; optional: boolean}
+  | {kind: 'group'; nodes: Array<PatternNode>; optional: boolean};
+
+/**
+ * Parses the subset of `URLPattern` pathname syntax that can be run backwards:
+ * literals, `:name`, `*`, and `{...}` groups, each optionally `?`.
+ *
+ * A regex group cannot be reversed, and `+` or `*` repetition has no single
+ * answer, so both throw rather than guess. Named the route, not the pattern,
+ * because the caller passed a name and that is what they can act on.
+ */
+const parsePattern = (pattern: string, name: string): Array<PatternNode> => {
+  let i = 0;
+  let positional = 0;
+
+  const takeModifier = (): boolean => {
+    const mod = pattern[i];
+    if (mod === '?') {
+      i++;
+      return true;
+    }
+    if (mod === '+' || mod === '*') {
+      throw new Error(
+        `Cannot build a link to '${name}': the repeating modifier '${mod}' in ` +
+          `'${pattern}' has no single reverse.`
+      );
+    }
+    return false;
+  };
+
+  const parseNodes = (untilBrace: boolean): Array<PatternNode> => {
+    const nodes: Array<PatternNode> = [];
+    let literal = '';
+    const flush = () => {
+      if (literal !== '') {
+        nodes.push({kind: 'literal', text: literal});
+        literal = '';
+      }
+    };
+
+    while (i < pattern.length) {
+      const c = pattern[i];
+      if (untilBrace && c === '}') {
+        break;
+      }
+      if (c === '\\') {
+        literal += pattern[i + 1] ?? '';
+        i += 2;
+        continue;
+      }
+      if (c === '(') {
+        throw new Error(
+          `Cannot build a link to '${name}': '${pattern}' contains a regular ` +
+            `expression group, which cannot be reversed. Use a named parameter.`
+        );
+      }
+      if (c === '{') {
+        flush();
+        i++;
+        const inner = parseNodes(true);
+        if (pattern[i] !== '}') {
+          throw new Error(
+            `Cannot build a link to '${name}': unbalanced '{' in '${pattern}'.`
+          );
+        }
+        i++;
+        nodes.push({kind: 'group', nodes: inner, optional: takeModifier()});
+        continue;
+      }
+      const named = c === ':' ? /^:([A-Za-z0-9_$]+)/.exec(pattern.slice(i)) : null;
+      if (named !== null) {
+        flush();
+        i += named[0].length;
+        nodes.push({kind: 'param', name: named[1], optional: takeModifier()});
+        continue;
+      }
+      if (c === '*') {
+        flush();
+        i++;
+        nodes.push({
+          kind: 'wildcard',
+          index: positional++,
+          optional: takeModifier(),
+        });
+        continue;
+      }
+      literal += c;
+      i++;
+    }
+    flush();
+    return nodes;
+  };
+
+  return parseNodes(false);
+};
+
+/** The highest wildcard index in `nodes`, or -1 when there is none. */
+const maxWildcard = (nodes: Array<PatternNode>): number =>
+  nodes.reduce(
+    (max, node) =>
+      node.kind === 'wildcard'
+        ? Math.max(max, node.index)
+        : node.kind === 'group'
+          ? Math.max(max, maxWildcard(node.nodes))
+          : max,
+    -1
+  );
+
+/**
+ * Builds a pathname from `nodes`, collecting the names of any parameters the
+ * caller did not supply.
+ *
+ * `tailIndex` is the wildcard that a trailing `/*` produced, or -1. That one
+ * may be left out: an empty tail is the index of a nested route space, which
+ * is what `linkTo('docs')` should mean. Any other wildcard is required, since
+ * dropping it would silently join the segments around it.
+ */
+const fillNodes = (
+  nodes: Array<PatternNode>,
+  params: {[key: string]: string | undefined},
+  tailIndex: number,
+  missing: Array<string>
+): string => {
+  let out = '';
+  for (const node of nodes) {
+    switch (node.kind) {
+      case 'literal':
+        out += node.text;
+        break;
+      case 'param': {
+        const value = params[node.name];
+        if (value === undefined) {
+          if (!node.optional) {
+            missing.push(node.name);
+          }
+        } else {
+          out += value;
+        }
+        break;
+      }
+      case 'wildcard': {
+        const value = params[String(node.index)];
+        if (value === undefined) {
+          if (!node.optional && node.index !== tailIndex) {
+            missing.push(String(node.index));
+          }
+        } else {
+          out += value;
+        }
+        break;
+      }
+      case 'group': {
+        const before = missing.length;
+        const text = fillNodes(node.nodes, params, tailIndex, missing);
+        if (missing.length > before && node.optional) {
+          // The whole point of an optional group: drop it, and the parameters
+          // it wanted stop being missing.
+          missing.length = before;
+        } else {
+          out += text;
+        }
+        break;
+      }
+    }
+  }
+  return out;
+};
+
+/** Runs a pathname pattern backwards. Throws naming every missing parameter. */
+const fillPattern = (
+  pattern: string,
+  params: {[key: string]: string | undefined},
+  name: string
+): string => {
+  const nodes = parsePattern(pattern, name);
+  const missing: Array<string> = [];
+  const tailIndex = TRAILING_WILDCARD.test(pattern) ? maxWildcard(nodes) : -1;
+  const text = fillNodes(nodes, params, tailIndex, missing);
+  if (missing.length > 0) {
+    throw new Error(
+      `Cannot build a link to '${name}': missing parameter` +
+        `${missing.length > 1 ? 's' : ''} ` +
+        missing.map((m) => `'${m}'`).join(', ') +
+        ` for pattern '${pattern}'.`
+    );
+  }
+  return text;
+};
+
+/**
  * A reactive controller that performs location-based routing using a
  * configuration of URL patterns and associated render callbacks.
  */
@@ -203,6 +398,66 @@ export class Routes implements ReactiveController {
     }
     pathname ??= this._currentPathname;
     return (this._parentRoutes?.link() ?? '') + pathname;
+  }
+
+  /**
+   * A URL for the route named `name`, with `params` substituted into its
+   * pattern.
+   *
+   * Lets a component say which route it means instead of where that route
+   * currently lives, so moving a route subtree does not silently break every
+   * hardcoded link inside it.
+   *
+   * Resolution covers the mounted controller tree: this controller, its
+   * ancestors, and any descendant that has rendered. A route in a branch that
+   * has not mounted yet is not addressable, because the mapping from a parent
+   * route to its child controller only exists once that parent has rendered.
+   * An unknown or ambiguous name throws rather than producing a wrong URL.
+   */
+  linkTo(
+    name: string,
+    params: {[key: string]: string | undefined} = {}
+  ): string {
+    let root: Routes = this;
+    while (root._parentRoutes !== undefined) {
+      root = root._parentRoutes;
+    }
+
+    const found: Array<{owner: Routes; route: RouteConfig}> = [];
+    const visit = (routes: Routes, seen: Set<Routes>) => {
+      // Cycle guard, matching `_supersede`; see the note there.
+      if (seen.has(routes)) {
+        return;
+      }
+      seen.add(routes);
+      for (const route of routes.routes) {
+        if (route.name === name) {
+          found.push({owner: routes, route});
+        }
+      }
+      for (const child of routes._childRoutes) {
+        visit(child, seen);
+      }
+    };
+    visit(root, new Set());
+
+    if (found.length === 0) {
+      throw new Error(
+        `No route named '${name}' in the mounted route tree. Names are only ` +
+          `resolvable once the controller holding them has rendered.`
+      );
+    }
+    if (found.length > 1) {
+      throw new Error(
+        `More than one route named '${name}' in the mounted route tree.`
+      );
+    }
+
+    const {owner, route} = found[0];
+    // The owner's own segment is being replaced by the generated one, so the
+    // prefix is everything above it.
+    const prefix = owner._parentRoutes?.link() ?? '';
+    return prefix + fillPattern(getPattern(route).pathname, params, name);
   }
 
   /**

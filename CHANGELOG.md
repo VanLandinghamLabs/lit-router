@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`linkTo(name, params)` builds a URL from a route's `name`**
+  ([#16](https://github.com/VanLandinghamLabs/lit-router/issues/16), inherited
+  from [lit/lit#3352](https://github.com/lit/lit/issues/3352)).
+  `RouteConfig.name` has existed since the fork began and was never read by
+  anything, so a component could only link by URL and had to know where its
+  parent was mounted. `linkTo` runs a route's pattern backwards and prefixes it
+  with that route's ancestors, so moving a subtree no longer breaks the links
+  inside it.
+
+  Resolution covers the mounted controller tree: the controller it is called
+  on, its ancestors, and any descendant that has rendered. A route in an
+  unmounted branch is not addressable, because the mapping from a parent route
+  to its child controller only exists once that parent has rendered. An unknown
+  name, a duplicated one, or a missing parameter throws rather than returning a
+  wrong URL.
+
+  Patterns are reversed for literals, `:name`, `*` and `{...}` groups, each
+  optionally `?`. A regex group cannot be reversed and `+` or `*` repetition
+  has no single answer, so both throw. A trailing wildcard may be omitted,
+  since the empty tail is the index of a nested route space; any other wildcard
+  is required.
+
 ## 0.5.0
 
 ### Fixed
