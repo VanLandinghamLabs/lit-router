@@ -49,6 +49,15 @@ const getNavigation = (): NavigationLike | undefined =>
   (window as unknown as {navigation?: NavigationLike}).navigation;
 
 /**
+ * The current location as a path string, in the form `goto()` parses.
+ *
+ * Only the origin is dropped: this router matches within one origin, and
+ * `_onNavigate` declines anything else before it gets here.
+ */
+const currentPath = (): string =>
+  window.location.pathname + window.location.search + window.location.hash;
+
+/**
  * True when the Navigation API is available — Baseline Newly Available since
  * January 2026 (Chrome/Edge, Safari 26.2, Firefox 147).
  *
@@ -128,7 +137,7 @@ export class Router extends Routes {
     // Surfaced rather than left as a bare unhandled rejection, matching the
     // convention in routes.ts: on an engine without the API this is the *only*
     // rendering path, and a deep link with no matching route throws here.
-    void this.goto(window.location.pathname).catch((err) => {
+    void this.goto(currentPath()).catch((err) => {
       queueMicrotask(() => {
         throw err;
       });
@@ -149,17 +158,21 @@ export class Router extends Routes {
    */
   private _onNavigate = (e: NavigateEventLike) => {
     // Not ours to handle: anything the browser says cannot be intercepted,
-    // fragment-only moves, downloads, and POST form submissions.
+    // downloads, and POST form submissions.
     //
     // `!= null`, not `!== null`: the spec types both as nullable-but-present,
     // but a polyfill that leaves either unset would make a strict check true
     // for every ordinary link and silently decline the whole app.
-    if (
-      !e.canIntercept ||
-      e.hashChange ||
-      e.downloadRequest != null ||
-      e.formData != null
-    ) {
+    if (!e.canIntercept || e.downloadRequest != null || e.formData != null) {
+      return;
+    }
+
+    // Fragment-only moves belong to the browser unless a route actually reads
+    // the fragment. Intercepting them unconditionally would cost every
+    // pathname-only app its native in-page scrolling — and re-render the same
+    // route to no effect — while declining them unconditionally is the
+    // lit/lit#3517 bug this router inherited.
+    if (e.hashChange && !this._constrainsHash()) {
       return;
     }
 
@@ -196,7 +209,8 @@ export class Router extends Routes {
     // throws "No route found", and the address bar is left pointing somewhere
     // the outlet never went. Declining lets the browser do the real
     // navigation, which is the correct outcome.
-    if (!this.hasRouteFor(url.pathname)) {
+    const path = url.pathname + url.search + url.hash;
+    if (!this.hasRouteFor(path)) {
       return;
     }
 
@@ -205,7 +219,7 @@ export class Router extends Routes {
       handler: async () => {
         // `e.signal` aborts if another navigation starts before this handler
         // resolves; goto() checks it after `enter()` and stands down.
-        await this.goto(url.pathname, {signal: e.signal});
+        await this.goto(path, {signal: e.signal});
       },
     });
   };

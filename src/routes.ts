@@ -31,8 +31,8 @@ export interface PathRouteConfig extends BaseRouteConfig {
  *
  * While `URLPattern` can match against protocols, hostnames, and ports,
  * routes will only be checked for matches if they're part of the current
- * origin. This means that the pattern is limited to checking `pathname` and
- * `search`.
+ * origin. This means the pattern is limited to checking `pathname`, `search`
+ * and `hash`.
  */
 export interface URLPatternRouteConfig extends BaseRouteConfig {
   pattern: URLPatternLike;
@@ -55,11 +55,61 @@ export interface URLPatternLike {
    * the groups object alone cannot (see `tailOf`).
    */
   readonly pathname: string;
-  test(input: {pathname: string}): boolean;
-  exec(input: {pathname: string}): {
+  /**
+   * The hash pattern string. `'*'` means the route places no constraint on the
+   * fragment, which is what `URLPattern` fills in for any component the caller
+   * omits. `Router` reads this to decide whether a fragment-only navigation is
+   * its business or the browser's.
+   */
+  readonly hash: string;
+  test(input: RouteLocation): boolean;
+  exec(input: RouteLocation): {
     pathname: {groups: {[key: string]: string | undefined}};
+    search: {groups: {[key: string]: string | undefined}};
+    hash: {groups: {[key: string]: string | undefined}};
   } | null;
 }
+
+/**
+ * The parts of a location this router matches against, split out of a path
+ * string by `parseLocation`.
+ *
+ * `search` and `hash` carry no leading `?` or `#`. `URLPattern` canonicalises
+ * either form away on an init input, but only for a real `URLPattern` — the
+ * structural `URLPatternLike` above admits other implementations, so the
+ * delimiters are stripped here rather than left to the pattern.
+ */
+export interface RouteLocation {
+  pathname: string;
+  search: string;
+  hash: string;
+}
+
+/**
+ * Splits `path` into the components a pattern is matched against.
+ *
+ * Deliberately not `new URL(path, origin)`: a nested controller's path is a
+ * *tail* — a bare relative segment like `abc` — which `URL` would resolve
+ * against the current directory and mangle.
+ */
+const parseLocation = (path: string): RouteLocation => {
+  const hashIndex = path.indexOf('#');
+  const hash = hashIndex === -1 ? '' : path.slice(hashIndex + 1);
+  const beforeHash = hashIndex === -1 ? path : path.slice(0, hashIndex);
+  const searchIndex = beforeHash.indexOf('?');
+  return {
+    pathname: searchIndex === -1 ? beforeHash : beforeHash.slice(0, searchIndex),
+    search: searchIndex === -1 ? '' : beforeHash.slice(searchIndex + 1),
+    hash,
+  };
+};
+
+/** Re-attaches `search` and `hash` to a pathname. Inverse of `parseLocation`. */
+const formatLocation = (
+  pathname: string,
+  {search, hash}: {search: string; hash: string}
+): string =>
+  pathname + (search === '' ? '' : `?${search}`) + (hash === '' ? '' : `#${hash}`);
 
 /**
  * A description of a route, which path or pattern to match against, and a
@@ -182,6 +232,15 @@ export class Routes implements ReactiveController {
 
   private _currentPathname: string | undefined;
   private _currentTail: string | undefined;
+  /**
+   * The search and hash of the current location.
+   *
+   * Ambient rather than tailed: only the pathname nests, so a child controller
+   * is handed the parent's tail as its pathname but the *same* search and
+   * hash. There is no meaningful way to split a fragment across a route tree.
+   */
+  private _currentSearch = '';
+  private _currentHash = '';
   private _currentRoute: RouteConfig | undefined;
   private _currentParams: {
     [key: string]: string | undefined;
@@ -235,13 +294,12 @@ export class Routes implements ReactiveController {
    * and the outlet ends up on a route the URL has already left. `Router`
    * threads `NavigateEvent.signal` through for exactly this reason.
    */
-  async goto(pathname: string, options?: {signal?: AbortSignal}) {
+  async goto(path: string, options?: {signal?: AbortSignal}) {
     // TODO (justinfagnani): handle absolute vs relative paths separately.
 
-    // TODO (justinfagnani): generalize this to handle query params and
-    // fragments. It currently only handles path names because it's easier to
-    // completely disregard the origin for now. The click handler only does
-    // an in-page navigation if the origin matches anyway.
+    const location = parseLocation(path);
+    const {pathname} = location;
+
     // Last-goto-wins, per controller. The navigation signal alone is not
     // enough: a child controller mounts as a *result* of its parent's render,
     // so its first goto() comes from `_onRoutesConnected` — after the parent's
@@ -261,9 +319,9 @@ export class Routes implements ReactiveController {
       // Simulate a tail group with the whole pathname
       this._currentParams = {0: tail};
     } else {
-      const match = this._match(pathname);
+      const match = this._match(location);
       if (match === undefined) {
-        throw new Error(`No route found for ${pathname}`);
+        throw new Error(`No route found for ${path}`);
       }
       const {route, params} = match;
       tail = match.tail;
@@ -288,6 +346,8 @@ export class Routes implements ReactiveController {
           : pathname.substring(0, pathname.length - tail.length);
     }
     this._currentTail = tail;
+    this._currentSearch = location.search;
+    this._currentHash = location.hash;
 
     // Propagate the tail match to children — deliberately NOT awaited.
     //
@@ -350,11 +410,19 @@ export class Routes implements ReactiveController {
    * replacement. Supersession is the counter's job.
    */
   private _routeChild(child: Routes, tail: string | undefined) {
-    if (tail === undefined || !child.hasRouteFor(tail)) {
+    if (tail === undefined) {
       child._supersede();
       return;
     }
-    void child.goto(tail).catch((err) => {
+    const childPath = formatLocation(tail, {
+      search: this._currentSearch,
+      hash: this._currentHash,
+    });
+    if (!child.hasRouteFor(childPath)) {
+      child._supersede();
+      return;
+    }
+    void child.goto(childPath).catch((err) => {
       queueMicrotask(() => {
         throw err;
       });
@@ -387,7 +455,32 @@ export class Routes implements ReactiveController {
   }
 
   /**
-   * True when this controller can render `pathname` — i.e. a route matches, or
+   * True when this controller, or any controller below it, has a route that
+   * constrains the hash.
+   *
+   * `Router` gates interception of fragment-only navigation on this. Left
+   * ungated, a pathname-only app would have every in-page anchor swallowed and
+   * re-rendered instead of scrolled; gated, such an app behaves exactly as it
+   * did before hash routes existed.
+   *
+   * Walks children because a nested controller may route on the hash while the
+   * top-level `Router` does not — and only the top-level one sees the
+   * navigate event.
+   */
+  protected _constrainsHash(seen: Set<Routes> = new Set()): boolean {
+    // Cycle guard, matching `_supersede`; see the note there.
+    if (seen.has(this)) {
+      return false;
+    }
+    seen.add(this);
+    return (
+      this.routes.some((r) => getPattern(r).hash !== '*') ||
+      this._childRoutes.some((c) => c._constrainsHash(seen))
+    );
+  }
+
+  /**
+   * True when this controller can render `path` — i.e. a route matches, or
    * a fallback is configured.
    *
    * `Router` gates interception on this: intercepting a path we cannot render
@@ -395,7 +488,7 @@ export class Routes implements ReactiveController {
    * moved and the outlet stale. Letting the browser handle it instead means a
    * server-rendered page, an export endpoint, or a GET form still works.
    */
-  hasRouteFor(pathname: string): boolean {
+  hasRouteFor(path: string): boolean {
     // A fallback matches everything, and a controller with no routes of its own
     // behaves as if it had a single `/*` route (goto()'s special case). Either
     // way the answer is yes without running a single pattern — worth
@@ -405,7 +498,8 @@ export class Routes implements ReactiveController {
     }
     // `test()`, not `_match()`: this only needs the yes/no, and `exec()` pays
     // ~8x on a hit to build a groups object the caller would throw away.
-    return this.routes.some((r) => getPattern(r).test({pathname}));
+    const location = parseLocation(path);
+    return this.routes.some((r) => getPattern(r).test(location));
   }
 
   /**
@@ -416,7 +510,7 @@ export class Routes implements ReactiveController {
    * extract: that ran the winning pattern twice, and every caller that wants a
    * route wants its params too.
    */
-  private _match(pathname: string):
+  private _match(location: RouteLocation):
     | {
         route: RouteConfig;
         params: {[key: string]: string | undefined};
@@ -424,10 +518,23 @@ export class Routes implements ReactiveController {
       }
     | undefined {
     for (const route of this.routes) {
-      const result = getPattern(route).exec({pathname});
+      const result = getPattern(route).exec(location);
       if (result !== null) {
-        const params = result.pathname.groups;
-        return {route, params, tail: tailOf(route, params)};
+        const params: {[key: string]: string | undefined} = {
+          ...result.pathname.groups,
+        };
+        // Named groups only. A positional group is keyed by index in every
+        // component independently, so `/child/*` with a hash of `*` yields a
+        // "0" in both — and `tailOf` picks the tail by highest numeric key.
+        // Merging them would let a fragment masquerade as the tail.
+        for (const groups of [result.search.groups, result.hash.groups]) {
+          for (const [key, value] of Object.entries(groups)) {
+            if (!/^\d+$/.test(key)) {
+              params[key] = value;
+            }
+          }
+        }
+        return {route, params, tail: tailOf(route, result.pathname.groups)};
       }
     }
     if (this.fallback === undefined) {
@@ -439,6 +546,7 @@ export class Routes implements ReactiveController {
     // nested controller is handed its tail *without* a leading slash, which
     // `/*` does not match, so a nested fallback matched nothing — empty
     // params, no tail, and its own children never routed.
+    const {pathname} = location;
     const tail = pathname.startsWith('/') ? pathname.slice(1) : pathname;
     return {route: {...this.fallback, path: '/*'}, params: {0: tail}, tail};
   }
