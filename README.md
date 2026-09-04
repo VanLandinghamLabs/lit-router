@@ -5,8 +5,8 @@
 A router for Lit, built on the [Navigation API](https://developer.mozilla.org/en-US/docs/Web/API/Navigation_API).
 Published on npm as [`lit-navigation-router`](https://www.npmjs.com/package/lit-navigation-router).
 
-Fork of [`@lit-labs/router`](https://github.com/lit/lit/tree/main/packages/labs/router)
-— see [NOTICE.md](./NOTICE.md) for provenance, licence and the full list of
+Fork of [`@lit-labs/router`](https://github.com/lit/lit/tree/main/packages/labs/router).
+See [NOTICE.md](./NOTICE.md) for provenance, licence and the full list of
 changes. Not affiliated with or endorsed by Google or the Lit team.
 
 ```sh
@@ -62,9 +62,10 @@ await routes.goto('/item/1', {signal});
 
 ## Nested routes and tails
 
-A route whose pattern ends in a wildcard — `/docs/*` — hands what the wildcard
-matched (the *tail*) to any `Routes` controller mounted by its `render()`. The
-tail has no leading slash, and child routes are written the same way:
+A route whose pattern ends in a wildcard, such as `/docs/*`, hands what the
+wildcard matched (the tail) to any `Routes` controller mounted by its
+`render()`. The tail has no leading slash, and child routes are written the
+same way:
 
 ```ts
 // Parent
@@ -78,7 +79,7 @@ private _routes = new Routes(this, [
 ```
 
 The index of a nested route space is the empty tail, spelled `{path: ''}`.
-`{path: '/'}` matches nothing there: it would need a tail of `/`, i.e. a URL of
+`{path: '/'}` matches nothing there. It would need a tail of `/`, so a URL of
 `/docs//`.
 
 Only a trailing wildcard produces a tail. An unnamed regex group
@@ -90,7 +91,7 @@ tail it is handed and passes that on.
 
 ## Search and hash routes
 
-A `pattern` route can constrain `search` and `hash`, not just `pathname`:
+A `pattern` route can constrain `search` and `hash` as well as `pathname`:
 
 ```ts
 {pattern: new URLPattern({pathname: '/docs', hash: ':section'}),
@@ -106,32 +107,31 @@ independently, so merging them would make a fragment indistinguishable from a
 tail. Name the groups you need.
 
 Only the pathname nests. A child controller is handed the parent's tail as its
-pathname and the *same* search and hash — there is no way to split a query
-string or a fragment across a route tree.
+pathname and the same search and hash. There is no way to split a query string
+or a fragment across a route tree.
 
-Fragment-only navigation (`<a href="#section">`) is intercepted **only** when
-some route constrains the hash. An app that routes on pathnames alone keeps the
+Fragment-only navigation (`<a href="#section">`) is intercepted only when some
+route constrains the hash. An app that routes on pathnames alone keeps the
 browser's native in-page scrolling.
 
-## Browser support — please read
+## Browser support, please read
 
-This router **requires the Navigation API**. There is no legacy fallback.
+This router requires the Navigation API. There is no legacy fallback.
 
-The API is Baseline **Newly** Available (January 2026: Chrome/Edge, Safari 26.2,
-Firefox 147). Baseline **Widely** Available is not until roughly mid-2028, so
-older engines are still in the wild.
+The API is Baseline Newly Available (January 2026: Chrome/Edge, Safari 26.2,
+Firefox 147). Baseline Widely Available is not until roughly mid-2028, so older
+engines are still in the wild.
 
 On an engine without it, `Router` renders the current route on load but does not
-intercept navigation — every link becomes an ordinary full page load. If your
+intercept navigation, so every link becomes an ordinary full page load. If your
 server serves the app shell on every route that is slower, not broken. If it
 does not, those links 404.
 
-**One case is genuinely broken, not just slow.** If you navigate
-programmatically with `history.pushState()` + `router.goto()`, nothing listens
-for the resulting `popstate` — so Back moves the URL while the outlet stays put,
-which is the URL/outlet split this fork exists to eliminate. Apps using that
-pattern should gate on `supportsNavigationApi()` rather than accept the
-degradation.
+One case is broken rather than slow. If you navigate programmatically with
+`history.pushState()` plus `router.goto()`, nothing listens for the resulting
+`popstate`, so Back moves the URL while the outlet stays put. That is the
+URL/outlet split this fork exists to eliminate. Apps using that pattern should
+gate on `supportsNavigationApi()` rather than accept the degradation.
 
 `supportsNavigationApi()` is exported so you can detect this at boot:
 
@@ -144,15 +144,15 @@ if (!supportsNavigationApi()) {
 ```
 
 If you need real pre-2026 support, pair this with a Navigation API polyfill
-rather than a second router: one decision path, with compatibility isolated in
-a layer whose whole job is spec accuracy.
+rather than a second router. That keeps one decision path, with compatibility
+isolated in a layer whose whole job is spec accuracy.
 
 ## `URLPattern`
 
 Route patterns are compiled with `URLPattern`, which this package uses from the
-global scope and does **not** polyfill — same as upstream. Every engine that has
-the Navigation API also has `URLPattern`, so if the support check above passes
-you need nothing. If you support older engines anyway, load
+global scope and does not polyfill, same as upstream. Every engine that has the
+Navigation API also has `URLPattern`, so if the support check above passes you
+need nothing. If you support older engines anyway, load
 [`urlpattern-polyfill`](https://www.npmjs.com/package/urlpattern-polyfill)
 before the router:
 
@@ -163,14 +163,14 @@ if (!globalThis.URLPattern) {
 }
 ```
 
-The published types do not depend on it — `URLPatternRouteConfig.pattern` is
+The published types do not depend on it. `URLPatternRouteConfig.pattern` is
 typed structurally, so a consumer build never needs the polyfill's types.
 
 ## Develop
 
 ```sh
 npm install
-npm run build        # tsc → development/
+npm run build        # tsc to development/
 npm test             # Web Test Runner (Chromium via Playwright)
 npm run check-types
 ```
