@@ -1,9 +1,13 @@
 version: 2
 
 updates:
-  # Workflow action pins. Grouped into one PR: they are updated together in
-  # practice, and a split would mean two CI runs to land what is usually a
-  # pair of version bumps.
+  # Workflow action pins. Minor and patch bumps are grouped, since they land
+  # together and a split would cost two CI runs to no benefit.
+  #
+  # Majors are deliberately left out of the group, so each arrives as its own
+  # PR. A group that includes them produces one PR crossing several major
+  # boundaries at once, which is untestable in the sense that matters: a
+  # failure names the batch rather than the dependency that caused it.
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -12,12 +16,18 @@ updates:
       actions:
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch
 
-  # devDependencies only move the lockfile and the test toolchain, so they are
-  # grouped and left to CI to judge. `lit` is deliberately not grouped with
-  # them: it is this package's only runtime dependency, its range is
-  # intentionally wide (`^3.0.0`), and a PR against it means a new major that
-  # wants a human decision about the supported range, not a lockfile bump.
+  # devDependencies only move the lockfile and the test toolchain, so minor and
+  # patch bumps are grouped and left to CI to judge. Majors arrive singly for
+  # the reason above: #18 grouped five of them, including TypeScript 5 to 7 and
+  # web-test-runner 0.20 to 1.0, into one PR.
+  #
+  # `lit` is not grouped with them. It is the only runtime dependency, its
+  # range is deliberately wide (`^3.0.0`), and a PR against it means a new
+  # major that wants a decision about the supported range.
   - package-ecosystem: npm
     directory: /
     schedule:
@@ -25,3 +35,6 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
+        update-types:
+          - minor
+          - patch
