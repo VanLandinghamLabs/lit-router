@@ -49,12 +49,12 @@
     "lit": "^3.0.0"
   },
   "devDependencies": {
-    "@open-wc/testing": "^4.0.0",
+    "@open-wc/testing": "^5.0.0",
     "@types/mocha": "^10.0.10",
-    "@web/dev-server-esbuild": "^1.0.4",
-    "@web/test-runner": "^0.20.0",
-    "@web/test-runner-playwright": "^0.11.1",
-    "typescript": "^5.7.0",
+    "@web/dev-server-esbuild": "^2.0.0",
+    "@web/test-runner": "^1.0.0",
+    "@web/test-runner-playwright": "^1.0.0",
+    "typescript": "^7.0.2",
     "urlpattern-polyfill": "^10.1.0"
   },
   "keywords": [
