@@ -114,6 +114,40 @@ Fragment-only navigation (`<a href="#section">`) is intercepted only when some
 route constrains the hash. An app that routes on pathnames alone keeps the
 browser's native in-page scrolling.
 
+## Named routes
+
+Give a route a `name` and link to it by that name instead of by URL, so a
+component does not have to know where the route currently lives:
+
+```ts
+{name: 'page', path: ':page', render: ({page}) => html`<doc-page .page=${page}></doc-page>`}
+
+// Anywhere in the mounted tree:
+html`<a href="${this._routes.linkTo('page', {page: 'intro'})}">Intro</a>`
+// => /docs/intro
+```
+
+`linkTo(name, params)` runs the route's pattern backwards and prefixes it with
+the route's ancestors, so moving a subtree from `/docs/*` to `/guide/*` does not
+break the links inside it. To navigate rather than render an href, hand the
+result to `goto()`.
+
+Resolution covers the mounted controller tree: the controller you call it on,
+its ancestors, and any descendant that has rendered. A route in a branch that
+has not mounted yet is not addressable, because the mapping from a parent route
+to its child controller only exists once that parent has rendered. An unknown
+name, an ambiguous one, or a missing parameter throws rather than producing a
+wrong URL.
+
+A trailing wildcard may be left out, since the empty tail is the index of a
+nested route space: `linkTo('docs')` on `{name: 'docs', path: '/docs/*'}` gives
+`/docs/`. Any other wildcard is required, because dropping it would silently
+join the segments around it.
+
+Patterns are reversed for literals, `:name`, `*` and `{...}` groups, each
+optionally `?`. A regex group cannot be reversed and `+` or `*` repetition has
+no single answer, so both throw. Name the groups you want to link to.
+
 ## Browser support, please read
 
 This router requires the Navigation API. There is no legacy fallback.
