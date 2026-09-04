@@ -8,10 +8,10 @@
   ([#13](https://github.com/VanLandinghamLabs/lit-router/issues/13), inherited
   from [lit/lit#3517](https://github.com/lit/lit/issues/3517)). Patterns were
   executed as `exec({pathname})`, and `URLPattern` defaults every component the
-  caller omits to the empty string — so `new URLPattern({hash: 'one'})` was
+  caller omits to the empty string, so `new URLPattern({hash: 'one'})` was
   compared against a hash of `''` and could never match. A hash- or
-  search-constrained route matched nothing at all, which made `goto()` throw
-  `No route found` on every load rather than merely failing to fire. Matching
+  search-constrained route matched nothing at all, so `goto()` threw
+  `No route found` on every load instead of just failing to fire. Matching
   now sees the whole location. Named groups captured from the search and hash
   are merged into `params`; positional ones are not, since each component
   numbers its groups from zero and a merged `"0"` would masquerade as a tail.
@@ -23,8 +23,8 @@
 - **Fragment-only navigation is routed when a route asks for it.** `Router`
   declined every navigation with `hashChange` set, so a hash route could not be
   reached by clicking a link even once matching was fixed. Such navigations are
-  now intercepted when — and only when — some route in the tree constrains the
-  hash, so pathname-only apps keep the browser's native in-page scrolling.
+  now intercepted only when some route in the tree constrains the hash, so
+  pathname-only apps keep the browser's native in-page scrolling.
 
 ### Changed
 
@@ -100,7 +100,7 @@
     the second-to-last group as its tail.
 
   **This changes behaviour.** If a route combines a wildcard with a param name
-  containing a digit, the child controller now receives a different path — the
+  containing a digit, the child controller now receives a different path, the
   correct one. Anything relying on the old selection was relying on the child
   being given the wrong segment.
 
@@ -119,7 +119,7 @@
   running every pattern, and the fallback no longer rebuilds a `URLPattern` on
   every navigation.
 - `location.origin` is read per navigation rather than at module scope, so
-  importing the package no longer touches `location` — importing it where there
+  importing the package no longer touches `location`. Importing it where there
   is no DOM previously threw, contradicting `sideEffects: false`.
 
 ### Known issues
