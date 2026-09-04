@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Routes can match on `search` and `hash`**
+  ([#13](https://github.com/VanLandinghamLabs/lit-router/issues/13), inherited
+  from [lit/lit#3517](https://github.com/lit/lit/issues/3517)). Patterns were
+  executed as `exec({pathname})`, and `URLPattern` defaults every component the
+  caller omits to the empty string — so `new URLPattern({hash: 'one'})` was
+  compared against a hash of `''` and could never match. A hash- or
+  search-constrained route matched nothing at all, which made `goto()` throw
+  `No route found` on every load rather than merely failing to fire. Matching
+  now sees the whole location. Named groups captured from the search and hash
+  are merged into `params`; positional ones are not, since each component
+  numbers its groups from zero and a merged `"0"` would masquerade as a tail.
+- **`goto()` is handed the search and hash.** `Router` called
+  `goto(window.location.pathname)` and `goto(url.pathname)`, so both were
+  discarded before matching ran. `goto()` now accepts and parses
+  `path?search#hash`, and passes them down to child controllers alongside the
+  tail.
+- **Fragment-only navigation is routed when a route asks for it.** `Router`
+  declined every navigation with `hashChange` set, so a hash route could not be
+  reached by clicking a link even once matching was fixed. Such navigations are
+  now intercepted when — and only when — some route in the tree constrains the
+  hash, so pathname-only apps keep the browser's native in-page scrolling.
+
+### Changed
+
+- `URLPatternLike` requires `hash`: the pattern string, which a real
+  `URLPattern` exposes and which is how `Router` decides whether a
+  fragment-only navigation is its business. Its `test()`/`exec()` take a
+  `{pathname, search, hash}` input, and `exec()` returns the `search` and
+  `hash` groups alongside the pathname's.
+
+### Documentation
+
+- The `URLPatternRouteConfig` doc comment claimed patterns were "limited to
+  checking `pathname` and `search`". `search` never worked either; both now do.
+
 ## 0.4.0
 
 ### Fixed

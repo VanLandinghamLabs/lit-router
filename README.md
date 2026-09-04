@@ -88,6 +88,31 @@ children nor stripped from `link()`. A `fallback` behaves like a `/*` route and
 passes the whole pathname on as the tail. Nested, it accepts the slash-less
 tail it is handed and passes that on.
 
+## Search and hash routes
+
+A `pattern` route can constrain `search` and `hash`, not just `pathname`:
+
+```ts
+{pattern: new URLPattern({pathname: '/docs', hash: ':section'}),
+ render: ({section}) => html`<doc-page .section=${section}></doc-page>`}
+
+{pattern: new URLPattern({pathname: '/search', search: 'q=:term'}),
+ render: ({term}) => html`<results-for .term=${term}></results-for>`}
+```
+
+Named groups captured from the search and hash join the pathname's in `params`.
+Positional ones do not: every component numbers its groups from zero
+independently, so merging them would make a fragment indistinguishable from a
+tail. Name the groups you need.
+
+Only the pathname nests. A child controller is handed the parent's tail as its
+pathname and the *same* search and hash — there is no way to split a query
+string or a fragment across a route tree.
+
+Fragment-only navigation (`<a href="#section">`) is intercepted **only** when
+some route constrains the hash. An app that routes on pathnames alone keeps the
+browser's native in-page scrolling.
+
 ## Browser support — please read
 
 This router **requires the Navigation API**. There is no legacy fallback.
